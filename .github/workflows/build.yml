@@ -20,17 +20,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          generate-wrappers: true   # 自动生成 wrapper 文件（如果缺失）
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-
-      - name: Generate gradle-wrapper.jar
-        run: |
-          mkdir -p gradle/wrapper
-          curl -L https://raw.githubusercontent.com/gradle/gradle/v8.5.0/gradle/wrapper/gradle-wrapper.jar \
-            -o gradle/wrapper/gradle-wrapper.jar
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
@@ -41,6 +40,3 @@ jobs:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
-
-      - name: List build output
-        run: ls -la app/build/outputs/apk/debug/
