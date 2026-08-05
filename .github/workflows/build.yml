@@ -20,23 +20,36 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      # 安装 Android SDK（使用 v3 虽然带 Node 警告，但可用；若想消除警告可改用手动安装）
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # 设置 Gradle（不再使用任何无效参数）
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          generate-wrappers: true   # 自动生成 wrapper 文件（如果缺失）
 
+      # 确保 gradlew 可执行
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # 若仓库中缺少 gradle-wrapper.jar，则下载（您原来的方式）
+      - name: Generate gradle-wrapper.jar
+        run: |
+          mkdir -p gradle/wrapper
+          curl -L https://raw.githubusercontent.com/gradle/gradle/v8.5.0/gradle/wrapper/gradle-wrapper.jar \
+            -o gradle/wrapper/gradle-wrapper.jar
+
+      # 构建 Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      # 上传 APK
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: List build output
+        run: ls -la app/build/outputs/apk/debug/
