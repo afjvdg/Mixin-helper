@@ -10,6 +10,7 @@ import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.remote.MojangApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -105,7 +106,7 @@ class MappingRepository @Inject constructor(
             else mappingDao.fuzzySearchFts(query)
         } catch (e: Exception) {
             // FTS5 失败时回退到 LIKE 搜索
-            mappingDao.searchMappings(query).first()
+            kotlinx.coroutines.flow.first(mappingDao.searchMappings(query))
         }
     }
 
