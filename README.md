@@ -13,16 +13,12 @@
 - 真实映射下载（Mojang / Fabric / Forge / NeoForge）
 - 模糊搜索（FTS5 + LIKE）
 - 离线映射存储
-- Mixin 代码实时生成与一键复制
-- ASM 描述符构建
 
 **Minecraft Mixin Helper** is an auxiliary tool designed for Minecraft mod developers, featuring:
 
 - Real mapping downloads (Mojang / Fabric / Forge / NeoForge)
 - Fuzzy search (FTS5 + LIKE)
 - Offline mapping storage
-- Real-time Mixin code generation with one-tap copy
-- ASM descriptor builder
 
 ---
 
@@ -71,9 +67,6 @@ app/build/outputs/apk/debug/app-debug.apk
 - ✅ 支持 Fabric Yarn mappings 下载
 - ✅ 模糊搜索（FTS5 全文搜索）
 - ✅ 离线映射数据库（Room + FTS5）
-- ✅ Mixin 模板实时生成（支持 @Inject / @Redirect 等）
-- ✅ ASM 描述符生成器
-- ✅ Material 3 现代 UI
 
 ---
 
