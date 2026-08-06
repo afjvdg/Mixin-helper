@@ -51,10 +51,11 @@ class DashboardViewModel @Inject constructor(
             _status.value = DashboardStatus.Loading("正在从远程获取版本列表...")
             try {
                 repository.fetchAndCacheVersions()
-                // 重新收集一次
+                
+                // 获取最新数据
                 repository.getVersions().collect { newVersions ->
                     _versions.value = newVersions
-                    _status.value = DashboardStatus.Idle
+                    _status.value = DashboardStatus.Success // 下载完成提示
                     return@collect
                 }
             } catch (e: Exception) {

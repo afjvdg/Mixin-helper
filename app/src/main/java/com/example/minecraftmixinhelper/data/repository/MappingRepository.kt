@@ -28,25 +28,33 @@ class MappingRepository @Inject constructor(
     suspend fun fetchAndCacheVersions() = withContext(Dispatchers.IO) {
         try {
             val manifest = mojangApi.getVersionManifest()
-            val mojangVersions = manifest.versions.take(30).map {
-                VersionEntity(it.id, "mojang", "mojmap", false)
-            }
+            val mojangVersions = manifest.versions
+                .filter { !it.id.startsWith("1.13") } // 排除 1.13 版本
+                .take(50)
+                .map { VersionEntity(it.id, "mojang", "mojmap", false) }
 
-            val fabricVersions = fabricApi.getGameVersions().take(20).map {
-                VersionEntity(it.version, "fabric", "yarn", false)
-            }
+            val fabricVersions = fabricApi.getGameVersions()
+                .filter { !it.version.startsWith("1.13") }
+                .take(30)
+                .map { VersionEntity(it.version, "fabric", "yarn", false) }
 
             val forgeVersions = listOf(
                 VersionEntity("1.20.1", "forge", "mojmap", false),
-                VersionEntity("1.20.1", "neoforge", "mojmap", false)
+                VersionEntity("1.20.1", "neoforge", "mojmap", false),
+                VersionEntity("1.19.4", "forge", "mojmap", false)
             )
 
-            val all = mojangVersions + fabricVersions + forgeVersions
-            versionDao.insertAll(all.distinctBy { it.version + it.loader })
+            val all = (mojangVersions + fabricVersions + forgeVersions)
+                .distinctBy { it.version + it.loader }
+                .sortedByDescending { it.version }
+
+            versionDao.insertAll(all)
         } catch (e: Exception) {
+            // 网络失败时插入少量默认数据
             val defaults = listOf(
                 VersionEntity("1.20.1", "fabric", "yarn", false),
-                VersionEntity("1.20.1", "forge", "mojmap", false)
+                VersionEntity("1.20.1", "forge", "mojmap", false),
+                VersionEntity("1.19.4", "neoforge", "mojmap", false)
             )
             versionDao.insertAll(defaults)
         }
@@ -108,14 +116,20 @@ class MappingRepository @Inject constructor(
 
     fun searchMappings(query: String) = mappingDao.searchMappings(query)
 
-    // 模糊搜索（优先使用 FTS5）
-    suspend fun fuzzySearch(query: String): List<MappingEntity> {
+    // 模糊搜索（支持按类型过滤）
+    suspend fun fuzzySearch(query: String, type: String = "CLASS"): List<MappingEntity> {
         return try {
-            if (query.isBlank()) emptyList()
-            else mappingDao.fuzzySearchFts(query)
+            if (query.isBlank()) return emptyList()
+            
+            val results = mappingDao.fuzzySearchFts(query)
+            
+            // 按类型过滤
+            results.filter { it.type.equals(type, ignoreCase = true) }
         } catch (e: Exception) {
-            // FTS5 失败时回退到 LIKE 搜索
-            mappingDao.searchMappings(query).first()
+            // 失败时回退
+            mappingDao.searchMappings(query).first().filter { 
+                it.type.equals(type, ignoreCase = true) 
+            }
         }
     }
 

@@ -19,13 +19,13 @@ class SearchViewModel @Inject constructor(
     private val _searchResults = MutableStateFlow<List<MappingEntity>>(emptyList())
     val searchResults: StateFlow<List<MappingEntity>> = _searchResults.asStateFlow()
 
-    fun search(query: String) {
+    fun search(query: String, type: String = "CLASS") {
         viewModelScope.launch {
             if (query.isBlank()) {
                 _searchResults.value = emptyList()
                 return@launch
             }
-            _searchResults.value = repository.fuzzySearch(query)
+            _searchResults.value = repository.fuzzySearch(query, type)
         }
     }
 }
