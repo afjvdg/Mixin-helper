@@ -12,13 +12,16 @@ import androidx.navigation.NavController
 
 @Composable
 fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hiltViewModel()) {
-    val query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
     val results by viewModel.searchResults.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         OutlinedTextField(
             value = query,
-            onValueChange = { viewModel.search(it) },
+            onValueChange = {
+                query = it
+                viewModel.search(it)
+            },
             label = { Text("搜索类/方法/字段 (支持 FTS 模糊搜索)") },
             modifier = Modifier.fillMaxWidth()
         )

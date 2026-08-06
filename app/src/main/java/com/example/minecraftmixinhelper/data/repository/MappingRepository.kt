@@ -52,14 +52,23 @@ class MappingRepository @Inject constructor(
         }
     }
 
-    // 真实下载并解析 Mojang mappings
-    suspend fun downloadAndParseMojangMappings(version: String, versionJsonUrl: String) = withContext(Dispatchers.IO) {
+    // 真实下载并解析 Mojang mappings（支持 Parchment 时同时下载）
+    suspend fun downloadAndParseMappings(
+        version: String, 
+        versionJsonUrl: String, 
+        mappingType: String
+    ) = withContext(Dispatchers.IO) {
         try {
-            val rawMappings = downloader.downloadMojangMappings(versionJsonUrl)
-            val entities = parseMojmap(rawMappings, version)
-            mappingDao.insertAll(entities)
+            // 总是先下载 Mojmap
+            val rawMojmap = downloader.downloadMojangMappings(versionJsonUrl)
+            val mojmapEntities = parseMojmap(rawMojmap, version)
+            mappingDao.insertAll(mojmapEntities)
+
+            // 如果是 Parchment，再额外处理（目前仅标记，后续可扩展）
+            if (mappingType == "parchment") {
+                // TODO: 下载 Parchment 参数映射（可扩展）
+            }
         } catch (e: Exception) {
-            // 失败时插入示例数据
             mappingDao.insertAll(listOf(
                 MappingEntity(className = "net.minecraft.world.entity.player.Player", obfuscatedName = "gfj", deobfuscatedName = "Player", type = "CLASS")
             ))
@@ -112,5 +121,21 @@ class MappingRepository @Inject constructor(
 
     suspend fun insertMappings(mappings: List<MappingEntity>) {
         mappingDao.insertAll(mappings)
+    }
+
+    // ==================== 映射类型自动决策逻辑 ====================
+    fun decideMappingType(mcVersion: String, loader: String): String {
+        // 旧版本使用 MCP
+        if (mcVersion <= "1.12.2") return "mcp"
+
+        return when (loader.lowercase()) {
+            "fabric" -> {
+                if (mcVersion >= "1.21.11") "mojmap" else "yarn"
+            }
+            "forge", "neoforge" -> {
+                if (mcVersion >= "1.18") "parchment" else "mojmap"
+            }
+            else -> "mojmap"
+        }
     }
 }
