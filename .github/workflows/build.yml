@@ -41,7 +41,7 @@ jobs:
 
       # 构建 Debug APK
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace -q
 
       # 上传 APK
       - name: Upload APK artifact
