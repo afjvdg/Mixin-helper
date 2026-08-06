@@ -1,0 +1,72 @@
+# TODO 清单 — Minecraft Mixin Helper
+
+> 基于 2026-08-06 全仓库代码审查整理。按优先级排列：P0 = 阻断核心功能，P1 = 功能缺陷，P2 = 质量完善。
+>
+> **状态更新（2026-08-06）**：P0 全部完成；P1 仅剩 Mixin 配置器相关；P2 大部分完成。
+
+---
+
+## P0 — 阻断性问题（核心功能不可用）
+
+- [x] **修复假 `versionJsonUrl`，下载映射当前必失败**
+  - 已修复：`VersionEntity` 新增 `versionJsonUrl` 列，版本列表从 `VersionManifest` 存下真实 URL，下载时直接使用（`MappingRepository.downloadAndParseMappings`）。
+
+- [x] **`MappingDao.fuzzySearchFts` 的 SQL 别名混用，编译/运行会报错**
+  - 已修复：改用 `WHERE id IN (SELECT rowid FROM mappings_fts WHERE mappings_fts MATCH :query)`，不再使用别名 JOIN。
+
+- [ ] **验证项目能否通过编译**
+  - ⚠️ 沙箱环境无 JDK/Android SDK，无法本地执行 `./gradlew assembleDebug`，此步需在有 Android Studio/SDK 的环境完成。
+  - 已做替代验证：解析器逻辑（Mojmap / Tiny / Parchment / 描述符）用 Python 1:1 复刻并对照官方格式样例跑断言，全部通过。
+  - 风险点已消除：FTS 查询改用子查询；`menuAnchor()` 用法保持 Compose Material3 兼容写法。
+
+## P1 — 功能缺陷
+
+- [x] **`MixinConfiguratorScreen` 未接入导航，用户进不去**
+  - 已决定删除：Mixin 代码示例生成器对目标用户无用（会写的不需要模板，不会写的用不上），已于 2026-08-06 移除 `MixinConfiguratorScreen` / `MixinTemplateRenderer` / `AsmDescriptor` 死代码。
+
+- [x] **Mojmap 解析不完整：只解析类，方法/字段是空壳**
+  - 已修复：新增 `MojmapParser`，完整解析类/方法/字段（含行号前后缀），填充 `descriptor` / `params` / `returnType`；去掉 `take(500)` 截断。
+
+- [x] **`decideMappingType` 用字符串字典序比较版本号，结果不可靠**
+  - 已修复：改为 `versionTuple`（数字元组）比较；且实际映射类型现由版本列表条目决定，`decideMappingType` 仅作兜底。
+
+- [x] **`MixinTemplateRenderer` 生成 `@Local` 注解，Mixin API 中不存在**
+  - 已决定删除：随 Mixin 配置器一并移除（见上条）。
+
+- [x] **底部导航选中状态写死**
+  - 已修复：用 `navController.currentBackStackEntryAsState()` 计算当前路由对比，导航使用 `launchSingleTop` + `restoreState`。
+
+## P2 — 代码质量与完善
+
+- [x] **清理未使用代码**
+  - `ForgeNeoForgeApi`：已被 `fetchAndCacheVersions` 调用（Forge/NeoForge 版本源）。
+  - `MappingDownloader.downloadYarnMappings()`：已实现完整 Yarn 下载 + Tiny 解析。
+  - `AsmDescriptorBuilder`：已被 MojmapParser / TinyParser 调用生成描述符；`AsmDescriptor` 数据类已随 Mixin 配置器删除。
+
+- [x] **`VersionEntity` 存 URL：版本列表缓存后需要可回溯的真实映射 URL**
+  - 已修复：新增 `versionJsonUrl` 列，含 v1→v2 迁移。
+
+- [x] **TypeConverter 空串边界**
+  - 已修复：`takeIf { it.isNotEmpty() }` 过滤空串。
+
+- [x] **搜索结果空态/加载态 UI**
+  - 已修复：无结果显示"未找到匹配项"；输入 250ms 防抖；搜索中显示加载指示器。
+
+- [x] **FTS 查询输入转义**
+  - 已修复：`toFtsMatchQuery` 清理非字母数字字符、按词用双引号包裹 + 前缀 `*`（FTS4 前缀匹配实现自动补全）。
+
+- [ ] **补充单元测试**
+  - 目前 0 测试。优先覆盖纯逻辑：`AsmDescriptorBuilder`、`MojmapParser`、`TinyParser`、`ParchmentParser`、`decideMappingType`、版本号比较。
+  - ⚠️ 沙箱无 JVM，可写代码但需在有 SDK 环境跑 `./gradlew test`。
+
+- [ ] **CI 工作流打磨**
+  - `gradle-wrapper.jar` 用 curl 拉取，建议提交进仓库或用 `gradle/actions/setup-gradle` 校验。
+  - 可加 `./gradlew test` 步骤。
+
+---
+
+## 里程碑建议
+
+1. **M1（先把地基打通）**：P0 全部 → 本地能 `assembleDebug` 出 APK —— ✅ 代码层面已完成，待真实环境编译验证
+2. **M2（核心链路可用）**：P1 全部 → 真实下载 → 解析 → 搜索 —— ✅ 已完成（Mixin 代码生成功能已按产品决策移除）
+3. **M3（工程化）**：P2 按需处理 → 补测试、清死代码、打磨 UI —— 单元测试与 CI 打磨待做
