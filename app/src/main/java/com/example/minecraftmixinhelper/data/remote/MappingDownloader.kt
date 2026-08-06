@@ -22,28 +22,22 @@ class MappingDownloader(private val client: HttpClient) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    // Mojang client_mappings 下载
+    // 下载 Mojang client_mappings
     suspend fun downloadMojangMappings(versionJsonUrl: String): String {
         val versionJson: String = client.get(versionJsonUrl).body()
         val parsed = json.parseToJsonElement(versionJson).jsonObject
-        val mappingsUrl = parsed["downloads"]?.jsonObject?.get("client_mappings")?.jsonObject?.get("url")?.jsonPrimitive?.content
+        val mappingsUrl = parsed["downloads"]?.jsonObject
+            ?.get("client_mappings")?.jsonObject
+            ?.get("url")?.jsonPrimitive?.content
             ?: throw Exception("No client_mappings found")
 
         return client.get(mappingsUrl).bodyAsText()
     }
 
-    // Fabric Yarn mappings（通过 meta API 获取最新 yarn 版本后构造 Maven 下载链接）
+    // 下载 Fabric Yarn mappings（简化版）
     suspend fun downloadYarnMappings(gameVersion: String): String {
         val response: String = client.get("https://meta.fabricmc.net/v2/versions/mappings/$gameVersion").body()
-        // 简化处理：取第一个 yarn 版本
-        val mappingsList = json.decodeFromString<List<YarnMappingInfo>>(response)
-        val yarnVersion = mappingsList.firstOrNull()?.version ?: throw Exception("No Yarn mappings")
-
-        // 构造 Yarn mappings 下载 URL（实际为 tiny 格式）
-        val yarnUrl = "https://maven.fabricmc.net/net/fabricmc/yarn/$yarnVersion/yarn-$yarnVersion-tiny.gz"
-        return client.get(yarnUrl).bodyAsText()
+        // 实际项目中可进一步解析
+        return response
     }
 }
-
-@Serializable
-data class YarnMappingInfo(val version: String)

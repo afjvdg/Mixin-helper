@@ -7,6 +7,7 @@ import com.example.minecraftmixinhelper.data.local.MappingDao
 import com.example.minecraftmixinhelper.data.local.VersionDao
 import com.example.minecraftmixinhelper.data.remote.FabricApi
 import com.example.minecraftmixinhelper.data.remote.ForgeNeoForgeApi
+import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.remote.MojangApi
 import com.example.minecraftmixinhelper.data.repository.MappingRepository
 import dagger.Module
