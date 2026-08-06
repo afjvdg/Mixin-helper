@@ -16,11 +16,21 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
 
     var selectedVersion by remember { mutableStateOf("") }
     var selectedLoader by remember { mutableStateOf("Fabric") }
-    val loaders = listOf("Fabric", "Forge", "NeoForge")
+    val loaders = listOf("Fabric", "Forge", "NeoForge", "mojang")
 
     // 版本下拉菜单状态
     var versionExpanded by remember { mutableStateOf(false) }
     var loaderExpanded by remember { mutableStateOf(false) }
+
+    // 根据当前 loader 过滤版本列表（mojang 显示全部，否则显示对应 loader 或 mojang 的版本）
+    val filteredVersions = remember(versions, selectedLoader) {
+        if (selectedLoader.equals("mojang", ignoreCase = true)) {
+            versions.filter { it.loader == "mojang" }
+        } else {
+            // 显示该 loader 的版本 + mojang 的版本（用户可用 mojang 的 URL 下载映射）
+            versions.filter { it.loader.equals(selectedLoader, ignoreCase = true) || it.loader == "mojang" }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -41,20 +51,34 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
                 label = { Text("Minecraft 版本") },
                 modifier = Modifier.fillMaxWidth().menuAnchor(),
                 readOnly = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = versionExpanded) }
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = versionExpanded) },
+                supportingText = { if (filteredVersions.isEmpty()) Text("暂无版本，请下拉刷新") }
             )
             ExposedDropdownMenu(
                 expanded = versionExpanded,
                 onDismissRequest = { versionExpanded = false }
             ) {
-                versions.forEach { version ->
-                    DropdownMenuItem(
-                        text = { Text(version.version) },
-                        onClick = {
-                            selectedVersion = version.version
-                            versionExpanded = false
-                        }
-                    )
+                if (filteredVersions.isEmpty()) {
+                    DropdownMenuItem(text = { Text("暂无数据") }, onClick = {})
+                } else {
+                    filteredVersions.take(100).forEach { version ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(version.version)
+                                    Text(
+                                        "${version.loader} • ${version.mappingType}" + if (version.isCached) " • 已缓存" else "",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            },
+                            onClick = {
+                                selectedVersion = version.version
+                                versionExpanded = false
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -88,22 +112,44 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
             }
         }
 
-        Button(
-            onClick = {
-                if (selectedVersion.isNotBlank()) {
-                    viewModel.downloadMappingsForVersion(selectedVersion, selectedLoader)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = selectedVersion.isNotBlank()
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = {
+                    if (selectedVersion.isNotBlank()) {
+                        viewModel.downloadMappingsForVersion(selectedVersion, selectedLoader)
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                enabled = selectedVersion.isNotBlank()
+            ) {
+                Text("下载映射")
+            }
+            OutlinedButton(
+                onClick = { viewModel.refreshVersions() },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("刷新版本列表")
+            }
+        }
+
+        OutlinedButton(
+            onClick = { navController.navigate("search") },
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text("获取版本并下载映射")
+            Text("去搜索页查看映射")
+        }
+
+        OutlinedButton(
+            onClick = { navController.navigate("mixin") },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("打开 Mixin 配置器")
         }
 
         // 状态反馈（含进度提示和详细错误）
         when (status) {
             is DashboardStatus.Idle -> {
-                Text("请选择版本和加载器后点击按钮", color = MaterialTheme.colorScheme.outline)
+                Text("请选择版本和加载器后点击下载", color = MaterialTheme.colorScheme.outline)
             }
             is DashboardStatus.Loading -> {
                 val message = (status as DashboardStatus.Loading).message
@@ -120,6 +166,10 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
                 val errorMsg = (status as DashboardStatus.Error).message
                 Text("✗ $errorMsg", color = MaterialTheme.colorScheme.error)
             }
+        }
+
+        if (versions.isNotEmpty()) {
+            Text("已加载 ${versions.size} 个版本", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         }
     }
 }

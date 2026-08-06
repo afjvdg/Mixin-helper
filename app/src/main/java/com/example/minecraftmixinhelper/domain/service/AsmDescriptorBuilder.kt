@@ -9,10 +9,13 @@ object AsmDescriptorBuilder {
     )
 
     fun toDescriptor(javaType: String): String {
+        val trimmed = javaType.trim()
+        require(trimmed.isNotEmpty()) { "javaType must not be empty" }
         return when {
-            javaType.endsWith("[]") -> "[" + toDescriptor(javaType.removeSuffix("[]"))
-            javaType in primitives -> primitives[javaType]!!
-            else -> "L${javaType.replace('.', '/')};"
+            trimmed.endsWith("[]") -> "[" + toDescriptor(trimmed.removeSuffix("[]"))
+            trimmed in primitives -> primitives[trimmed]!!
+            trimmed.contains("/") -> "L$trimmed;"
+            else -> "L${trimmed.replace('.', '/')};"
         }
     }
 

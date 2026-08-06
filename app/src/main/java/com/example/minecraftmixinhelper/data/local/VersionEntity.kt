@@ -1,13 +1,13 @@
 package com.example.minecraftmixinhelper.data.local
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 
-@Entity(tableName = "versions")
+@Entity(tableName = "versions", primaryKeys = ["version", "loader"])
 data class VersionEntity(
-    @PrimaryKey val version: String,
+    val version: String,
     val loader: String,
     val mappingType: String,
+    val versionUrl: String? = null,
     val isCached: Boolean = false,
     val lastUpdated: Long = System.currentTimeMillis()
 )

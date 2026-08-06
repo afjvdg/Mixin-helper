@@ -17,7 +17,7 @@ interface MappingDao {
     @Query("""
         SELECT m.* FROM mappings m 
         JOIN mappings_fts fts ON m.id = fts.rowid 
-        WHERE mappings_fts MATCH :query 
+        WHERE fts MATCH :query 
         LIMIT 100
     """)
     suspend fun fuzzySearchFts(query: String): List<MappingEntity>
