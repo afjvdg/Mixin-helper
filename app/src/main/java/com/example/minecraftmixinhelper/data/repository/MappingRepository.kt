@@ -106,7 +106,7 @@ class MappingRepository @Inject constructor(
             else mappingDao.fuzzySearchFts(query)
         } catch (e: Exception) {
             // FTS5 失败时回退到 LIKE 搜索
-            kotlinx.coroutines.flow.first(mappingDao.searchMappings(query))
+            mappingDao.searchMappings(query).first()
         }
     }
 
