@@ -12,4 +12,8 @@ class ForgeNeoForgeApi(private val client: HttpClient) {
     suspend fun getNeoForgeMetadata(): String {
         return client.get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml").body()
     }
+
+    suspend fun getParchmentMetadata(): String {
+        return client.get("https://maven.parchmentmc.org/org/parchmentmc/data/parchment/maven-metadata.xml").body()
+    }
 }

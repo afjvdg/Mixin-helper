@@ -14,7 +14,7 @@ import javax.inject.Inject
 sealed class DashboardStatus {
     object Idle : DashboardStatus()
     data class Loading(val message: String) : DashboardStatus()
-    object Success : DashboardStatus()
+    data class Success(val message: String) : DashboardStatus()
     data class Error(val message: String) : DashboardStatus()
 }
 
@@ -30,54 +30,46 @@ class DashboardViewModel @Inject constructor(
     val status: StateFlow<DashboardStatus> = _status.asStateFlow()
 
     init {
-        // 启动时加载版本列表（如果数据库为空则从远程获取）
         loadVersionsIfNeeded()
     }
 
     private fun loadVersionsIfNeeded() {
         viewModelScope.launch {
-            repository.getVersions().collect { cachedVersions ->
-                if (cachedVersions.isEmpty()) {
-                    fetchVersionsFromRemote()
-                } else {
-                    _versions.value = cachedVersions
-                }
+            repository.getVersions().collect { cached ->
+                _versions.value = cached
+                if (cached.isEmpty()) refreshVersions()
             }
         }
     }
 
-    private fun fetchVersionsFromRemote() {
+    fun refreshVersions() {
         viewModelScope.launch {
             _status.value = DashboardStatus.Loading("正在从远程获取版本列表...")
             try {
                 repository.fetchAndCacheVersions()
-                
-                // 获取最新数据
-                repository.getVersions().collect { newVersions ->
-                    _versions.value = newVersions
-                    _status.value = DashboardStatus.Success // 下载完成提示
-                    return@collect
-                }
+                _status.value = DashboardStatus.Success("版本列表已更新")
             } catch (e: Exception) {
                 _status.value = DashboardStatus.Error("获取版本失败: ${e.message}")
             }
         }
     }
 
-    fun downloadMappingsForVersion(version: String, loader: String) {
+    fun downloadMappings(entity: VersionEntity) {
         viewModelScope.launch {
-            _status.value = DashboardStatus.Loading("正在决定映射类型并下载...")
-
+            _status.value =
+                DashboardStatus.Loading("正在决定映射类型并下载 ${entity.version} (${entity.loader})...")
             try {
-                val mappingType = repository.decideMappingType(version, loader)
+                val mappingType = repository.decideMappingType(entity.version, entity.loader)
                 _status.value = DashboardStatus.Loading("正在下载 $mappingType 映射...")
-
-                // 实际项目中应从版本数据中获取真实 versionJsonUrl
-                val versionJsonUrl = "https://piston-meta.mojang.com/v1/packages/.../$version.json"
-
-                repository.downloadAndParseMappings(version, versionJsonUrl, mappingType)
-
-                _status.value = DashboardStatus.Success
+                repository.downloadAndParseMappings(
+                    entity.version,
+                    entity.versionJsonUrl,
+                    mappingType,
+                    entity.loader
+                )
+                _status.value = DashboardStatus.Success(
+                    "✓ ${entity.version} (${entity.loader}) 映射下载成功，已缓存到本地！"
+                )
             } catch (e: Exception) {
                 _status.value = DashboardStatus.Error("下载失败: ${e.message}")
             }

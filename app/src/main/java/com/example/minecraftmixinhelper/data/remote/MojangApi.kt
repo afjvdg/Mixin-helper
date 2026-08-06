@@ -9,7 +9,11 @@ import kotlinx.serialization.Serializable
 data class VersionManifest(val versions: List<VersionEntry>)
 
 @Serializable
-data class VersionEntry(val id: String, val url: String)
+data class VersionEntry(
+    val id: String,
+    val url: String,
+    val type: String = "release" // release / snapshot
+)
 
 class MojangApi(private val client: HttpClient) {
     suspend fun getVersionManifest(): VersionManifest {
