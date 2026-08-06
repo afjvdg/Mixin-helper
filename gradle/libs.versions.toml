@@ -5,6 +5,8 @@ hilt = "2.50"
 ksp = "1.9.24-1.0.20"
 room = "2.6.1"
 ktor = "2.3.7"
+hiltNavigationCompose = "1.2.0"
+
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version = "1.12.0" }
@@ -31,6 +33,9 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version = "1.7.3" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version = "2.7.7" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version = "2.7.0" }
+
+hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
