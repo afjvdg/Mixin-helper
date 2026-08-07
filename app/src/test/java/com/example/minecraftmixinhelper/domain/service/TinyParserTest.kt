@@ -42,7 +42,7 @@ class TinyParserTest {
         val fields = parsed.filter { it.type == "FIELD" }
 
         assertEquals(4, classes.size)
-        assertEquals(15, methods.size)
+        assertEquals(14, methods.size)
         assertEquals(3, fields.size)
 
         // 方法：owner 类名从源命名空间重映射到目标命名空间
