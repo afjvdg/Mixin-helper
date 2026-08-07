@@ -56,6 +56,8 @@
 - **Kotlin 反引号函数名不允许 `> < : ; [ ] / \` 等字符**（测试方法名里写 `->` 会编译失败，用「到」代替）
 - Dashboard 下载必须用 `entity.mappingType`（`decideMappingType` 只是兜底；Parchment 源曾被覆写为 mojmap 而必然失败）
 - FTS4 前缀匹配写法 `MATCH "\"词\"*"`（输入先清洗特殊字符）；Room 查询用子查询避免 FTS 表 JOIN 别名混用
+- **自适应图标前景必须是「有密度限定符」的位图**：`ic_launcher_foreground.png`（108×108）**不能放在 `mipmap-anydpi-v26/`**（`anydpi` = 密度无关，放位图会让资源表无法解析尺寸，第三方工具/系统读图标时得到宽高 0 → `Bitmap.createBitmap: width and height must be > 0`，表现为图标纯色/无法渲染）。应放在 `mipmap-xxxhdpi/ic_launcher_foreground.png`，`mipmap-anydpi-v26/` 只留 `ic_launcher.xml` / `ic_launcher_round.xml`
+- **纯 Compose 应用不要引用 `Theme.Material3.*` XML 主题**：它来自 `com.google.android.material`（未声明该依赖），应使用框架 `android:Theme.Material.Light.NoActionBar`（详见 §8）
 
 ## 5. 测试现状
 
@@ -79,3 +81,15 @@
 2. 若测试仍有失败，按 §3 格式要点与 §4 代码坑排查
 3. 向仓库所有者说明：在 CI 补单测步骤（一行命令，需 workflows 权限）
 4. 有条件时做真机端到端验证（§6）
+
+## 8. 安装闪退 / 图标问题排查记录（2026-08-07）
+
+现象：真机（Android 16 / SDK 36）安装应用时「安装程序闪退」，MT 管理器显示图标为纯色，其尝试提取图标为 PNG 时抛 `IllegalArgumentException: width and height must be > 0`。
+
+已修复两处「前置」根因：
+1. **自适应图标前景位图放错目录**：`ic_launcher_foreground.png` 原在 `mipmap-anydpi-v26/`（`anydpi` = 密度无关），位图无密度限定符，资源表无法解析其尺寸 → 第三方/系统读图标得到宽高 0。已 `git mv` 至 `mipmap-xxxhdpi/ic_launcher_foreground.png`（108×108 为标准 xxxhdpi 前景尺寸），`mipmap-anydpi-v26/` 只保留两个 adaptive-icon XML。
+2. **纯 Compose 项目引用了未声明的 XML 主题**：`Theme.Material3.DayNight.NoActionBar` 来自 `com.google.android.material`，但 `build.gradle.kts` 未声明该依赖，且该 style 是自引用（parent=自身）→ 无法解析。已改为框架主题 `android:Theme.Material.Light.NoActionBar`（API 21+，minSdk 26 恒可用），应用与 Activity 的 `android:theme` 均指向新的 `Theme.MinecraftMixinHelper`。
+
+图标 PNG 本身经验证均为标准 8-bit RGBA、尺寸合规、内容正常，**非图标图片损坏**；问题在资源放置位置与主题依赖。
+
+> 若换装后仍失败，需补充真机报错文案（如 "There was a problem parsing the package" / "App not installed" / logcat）与目标 SDK、签名信息进一步定位。
