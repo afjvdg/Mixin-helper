@@ -125,6 +125,7 @@ object ParchmentParser {
         is JsonPrimitive -> el.contentOrNull?.takeIf { it.isNotBlank() }
         is JsonArray -> el.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
             .joinToString("\n")
+            .trimEnd()
             .takeIf { it.isNotBlank() }
         else -> null
     }

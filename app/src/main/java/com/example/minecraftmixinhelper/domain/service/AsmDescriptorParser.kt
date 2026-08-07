@@ -55,24 +55,28 @@ object AsmDescriptorParser {
 
     private fun parseOne(s: String, start: Int): Pair<String, Int> {
         var i = start
-        val sb = StringBuilder()
+        var dims = 0
         while (i < s.length && s[i] == '[') {
-            sb.append("[]")
+            dims++
             i++
         }
-        return when {
+        // 先解析基础类型，再把数组维度以 `[]` 后缀拼在其后（`[[I` -> `int[][]`），
+        // 避免把维度误拼在类型名前（`[I` 错误地变成 `[]int`）。
+        val base = when {
             i < s.length && s[i] == 'L' -> {
                 val end = s.indexOf(';', i)
                 require(end > i) { "对象类型描述符未闭合: $s" }
                 val className = s.substring(i + 1, end).replace('/', '.')
-                sb.append(className)
-                sb.toString() to (end + 1)
+                i = end + 1
+                className
             }
             i < s.length && s[i] in PRIMITIVES -> {
-                sb.append(PRIMITIVES[s[i]])
-                sb.toString() to (i + 1)
+                val primitive = PRIMITIVES[s[i]]
+                i += 1
+                primitive
             }
             else -> error("无法解析描述符片段: '${if (i < s.length) s[i] else "EOF"}' in $s")
         }
+        return base + "[]".repeat(dims) to i
     }
 }

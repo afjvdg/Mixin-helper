@@ -51,7 +51,7 @@ class MojmapParserTest {
     fun `解析真实格式方法行（行号前缀 + 可读类型）`() {
         val parsed = MojmapParser.parse(realStyleMappings)
         val methods = parsed.filter { it.type == "METHOD" }
-        assertEquals(3, methods.size)
+        assertEquals(4, methods.size)
 
         val getInventory = methods.first { it.deobfuscatedName == "getInventory" }
         assertEquals("method_1234", getInventory.obfuscatedName)
@@ -106,7 +106,7 @@ class MojmapParserTest {
         assertEquals(2, methods.size)
 
         val getPoses = methods.first { it.deobfuscatedName == "getPoses" }
-        assertEquals("[Lnet/minecraft/core/BlockPos;", getPoses.descriptor)
+        assertEquals("()[Lnet/minecraft/core/BlockPos;", getPoses.descriptor)
 
         val init = methods.first { it.deobfuscatedName == "<init>" }
         assertEquals("(I)V", init.descriptor)

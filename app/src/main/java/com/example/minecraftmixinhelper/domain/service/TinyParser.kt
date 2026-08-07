@@ -39,8 +39,20 @@ object TinyParser {
         val targetIdx = pickIndex(namespaces, "mojang", "official")
             ?: (namespaces.lastIndex)
 
-        val result = mutableListOf<MojmapParser.ParsedMapping>()
+        // 真实 Yarn 类按字典序排列，成员描述符可能引用「后置定义」的类，
+        // 因此必须两遍解析：第一遍先收集完整 classMap，第二遍再输出成员，
+        // 否则被后置类引用的描述符无法重映射（单遍解析会失效）。
         val classMap = mutableMapOf<String, String>() // source class (slashes) -> target class (slashes)
+        for (line in lines.drop(1)) {
+            val token = line.firstOrNull() ?: continue
+            if (token != 'c') continue
+            val parts = line.substring(1).trim().split(Regex("""\s+"""))
+            if (parts.isNotEmpty() && parts.size > maxOf(sourceIdx, targetIdx)) {
+                classMap[parts[sourceIdx]] = parts[targetIdx]
+            }
+        }
+
+        val result = mutableListOf<MojmapParser.ParsedMapping>()
         var currentClass: String? = null // 当前类（源命名空间，斜杠形式）
 
         for (line in lines.drop(1)) {
@@ -55,7 +67,6 @@ object TinyParser {
                         val source = parts[sourceIdx]
                         val target = parts[targetIdx]
                         currentClass = source
-                        classMap[source] = target
                         result.add(
                             MojmapParser.ParsedMapping(
                                 type = "CLASS",

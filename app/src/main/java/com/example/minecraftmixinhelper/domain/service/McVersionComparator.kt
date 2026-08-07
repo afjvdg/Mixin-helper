@@ -71,7 +71,9 @@ object McVersionComparator {
             }
             else -> base
         } ?: return null
-        // 兜底校验：MC 版本必须以 `数字.数字` 开头
-        return mcVersion.takeIf { it.matches(Regex("""^\d+\.\d+""")) }
+        // 兜底校验：MC 版本必须以 `数字.数字` 开头。
+        // 用 containsMatchIn 做「前缀」校验：matches() 是整串匹配，会把 `1.20.1` 这类
+        // 三段版本号误判为不合法（`^\d+\.\d+` 只匹配到前缀）。
+        return mcVersion.takeIf { Regex("""^\d+\.\d+""").containsMatchIn(it) }
     }
 }
