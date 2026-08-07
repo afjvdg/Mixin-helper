@@ -19,6 +19,16 @@ interface MappingDao {
     )
     fun searchMappings(query: String): Flow<List<MappingEntity>>
 
+    // 按字段搜索（可读名 / 混淆名 / 类名），用于「搜索字段」选择
+    @Query("SELECT * FROM mappings WHERE deobfuscatedName LIKE '%' || :query || '%' LIMIT 300")
+    suspend fun searchByDeobfuscated(query: String): List<MappingEntity>
+
+    @Query("SELECT * FROM mappings WHERE obfuscatedName LIKE '%' || :query || '%' LIMIT 300")
+    suspend fun searchByObfuscated(query: String): List<MappingEntity>
+
+    @Query("SELECT * FROM mappings WHERE className LIKE '%' || :query || '%' LIMIT 300")
+    suspend fun searchByClassName(query: String): List<MappingEntity>
+
     // 使用子查询避免 FTS 表别名混用（修复原 JOIN 写法）
     @Query(
         """

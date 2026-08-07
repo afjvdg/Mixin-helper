@@ -149,3 +149,24 @@
 - `McpCsv` 新增 `fieldJavadoc` / `params` 字段；`MappingDownloader.downloadMcpStable` 从 zip 提取 `params.csv` 并解析。
 - 这些数据经通用的 `MappingEntity.paramNames` / `MappingEntity.javadoc` 入库，搜索页详情对话框自动展示（无需额外 UI 改动）。
 - 新增 `McpParserTest` 用例：字段 javadoc、参数名按槽位对齐（含静态方法 long 占 2 槽、真实 `setPosition(double,double,double)` 双槽验证）。
+
+## 13. 搜索增强 / 版本排序修复 / 下载进度（2026-08-07）
+
+### 搜索（修复 Issue 1、2）
+- **根因**：`SearchViewModel` 默认 `_type="CLASS"`，导致输入 `get` 只搜 CLASS，而 `getX` 是 METHOD 被过滤 → 搜不到。现默认 `type=""`（全部类型），点击类型 chip 过滤，再点已选中项可取消回「全部」。
+- **搜索字段选择**：新增「全部 / 可读名 / 混淆名 / 类名」chips（`SearchViewModel._field`，值 deobf/obf/class/""）。`MappingDao` 增加 `searchByDeobfuscated` / `searchByObfuscated` / `searchByClassName`；`MappingRepository.fuzzySearch` 增加 `field` 参数，`type` 默认 ""（全部）。子串 LIKE 保证 `get` 命中 `getX` 等方法。
+- **混淆名搜索的实用性**（评估结论）：有用——modder 在写 `ObfuscationReflectionHelper`、ASM 字节码注入、读玩家崩溃日志（stacktrace 里是 SRG 名 `func_xxx`/`field_xxx`）时常需用混淆名反查可读名。故保留，但作为独立「混淆名」选项，默认搜可读名。
+
+### 版本排序（修复 Issue 5）
+- **根因**：`VersionDao.getAllVersions()` 用 `ORDER BY lastUpdated DESC`（插入时间），把仓库里按版本号排好的顺序覆盖成了乱序（如 1.10/1.8/1.16.2）。现 `DashboardViewModel` 在收集后用 `McVersionComparator.compare(b.version, a.version)` 内存降序排序。
+- 排序算法本身正确（数字元组逐位比较：1.16.2>1.14.4>1.12.2>1.10.2>1.8.9，1.21.11>1.20.1>1.19.2>1.18）。
+
+### 下载进度 + 速度（Issue 3）
+- `MappingDownloader` 新增 `DownloadProgressListener`（fun interface）与 `bindProgressListener`，用 ktor `onDownload { bytesSentTotal, contentLength -> }` 逐字节上报。
+- `DownloadManager` 暴露 `progress: StateFlow<DownloadProgress>`（downloaded/total/speed/percent），计算速度。
+- Dashboard 加载态改为：有总长时显示确定进度条 + `已下载/总量 · 速度/s`，无总长时回落不确定进度条。
+
+### Forge vs NeoForge 映射差异（Issue 4，确认）
+- 研究结论：**两者在 mod 编写时使用的映射名相同**——都基于 **Mojang 官方映射（mojmap）**，通常叠加 **Parchment**（参数名+Javadoc）。Forge 自 1.17 起、NeoForge 自 1.20.1 起使用 mojmap。
+- 差异仅在 **Forge <1.17**：Forge 1.17 之前用 **MCP**（社区映射，SRG 名 `func_xxx`/`field_xxx`），NeoForge 没有 <1.17 的旧版本。
+- 当前 app 实现已一致：forge>=1.17 与 neoforge 都是 `parchment`（mojmap+Parchment 捆绑下载），forge<1.17 是 `mcp`。无需改动。

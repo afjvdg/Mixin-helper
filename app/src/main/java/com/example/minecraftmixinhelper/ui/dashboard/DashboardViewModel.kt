@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.minecraftmixinhelper.data.local.VersionEntity
 import com.example.minecraftmixinhelper.data.repository.MappingRepository
+import com.example.minecraftmixinhelper.domain.service.McVersionComparator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,7 @@ class DashboardViewModel @Inject constructor(
     // 全局状态与进行中的下载集合，均来自应用级 DownloadManager（支持后台下载）
     val status: StateFlow<DashboardStatus> = downloadManager.status
     val activeIds: StateFlow<Set<String>> = downloadManager.activeIds
+    val progress: StateFlow<DownloadProgress> = downloadManager.progress
 
     init {
         loadVersionsIfNeeded()
@@ -38,7 +40,11 @@ class DashboardViewModel @Inject constructor(
     private fun loadVersionsIfNeeded() {
         viewModelScope.launch {
             repository.getVersions().collect { cached ->
-                _versions.value = cached
+                // 数据库按 lastUpdated 返回，需在内存按版本号（降序，最新在前）排序，
+                // 否则 1.10/1.8/1.16.2 这类会显示为混乱的插入顺序。
+                _versions.value = cached.sortedWith { a, b ->
+                    McVersionComparator.compare(b.version, a.version)
+                }
                 if (cached.isEmpty()) downloadManager.refreshVersions()
             }
         }

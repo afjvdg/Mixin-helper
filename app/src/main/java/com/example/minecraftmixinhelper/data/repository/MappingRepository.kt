@@ -273,27 +273,41 @@ class MappingRepository @Inject constructor(
 
     // ==================== 搜索（FTS4 前缀 + LIKE 回退） ====================
 
+    /**
+     * 实时搜索。
+     * [field] 限定搜索范围：deobf / obf / class / all（空 = 全部字段）。
+     * [type] 限定类型：CLASS / METHOD / FIELD / all（空或 ALL = 全部类型，默认）。
+     * 子串匹配（LIKE）保证「get」能命中 getX 等方法。
+     */
     suspend fun fuzzySearch(
         query: String,
-        type: String = "ALL",
+        type: String = "",
         version: String = "",
-        loader: String = ""
+        loader: String = "",
+        field: String = ""
     ): List<MappingEntity> {
         if (query.isBlank()) return emptyList()
-        // 同时使用 FTS 前缀匹配（性能好）与 LIKE 子串匹配（覆盖「包含」场景），
-        // 例如输入 "pla" 既能命中 play / player（前缀），也能命中含 "pla" 的其他名称。
-        val fts = try {
-            mappingDao.fuzzySearchFts(toFtsMatchQuery(query))
-        } catch (e: Exception) {
-            emptyList()
+        val raw = query.trim()
+        val matched = when (field.lowercase()) {
+            "deobf" -> mappingDao.searchByDeobfuscated(raw)
+            "obf" -> mappingDao.searchByObfuscated(raw)
+            "class" -> mappingDao.searchByClassName(raw)
+            else -> {
+                // 全部字段：FTS 前缀 + LIKE 子串合并
+                val fts = try {
+                    mappingDao.fuzzySearchFts(toFtsMatchQuery(raw))
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                val like = try {
+                    mappingDao.searchMappings(raw).first()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                (fts + like).distinctBy { it.id }
+            }
         }
-        val like = try {
-            mappingDao.searchMappings(query).first()
-        } catch (e: Exception) {
-            emptyList()
-        }
-        val merged = (fts + like).distinctBy { it.id }
-        return filterResults(merged, type, version, loader)
+        return filterResults(matched, type, version, loader)
     }
 
     private fun filterResults(
@@ -303,7 +317,7 @@ class MappingRepository @Inject constructor(
         loader: String = ""
     ): List<MappingEntity> {
         return results.filter { m ->
-            (type == "ALL" || m.type.equals(type, ignoreCase = true)) &&
+            (type.isBlank() || type.equals("ALL", true) || m.type.equals(type, ignoreCase = true)) &&
                 (version.isBlank() || m.version == version) &&
                 (loader.isBlank() || m.loader.equals(loader, ignoreCase = true))
         }

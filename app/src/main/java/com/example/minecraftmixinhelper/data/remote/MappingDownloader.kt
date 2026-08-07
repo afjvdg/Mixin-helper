@@ -2,6 +2,7 @@ package com.example.minecraftmixinhelper.data.remote
 
 import io.ktor.client.*
 import io.ktor.client.call.*
+import io.ktor.client.plugins.onDownload
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import com.example.minecraftmixinhelper.domain.service.McpParser
@@ -10,7 +11,29 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
 
+/** 下载进度回调：已下载字节数、总字节数（可能为 null，表示未知）。 */
+fun interface DownloadProgressListener {
+    fun onProgress(downloaded: Long, total: Long?)
+}
+
 class MappingDownloader(private val client: HttpClient) {
+
+    @Volatile
+    private var progressListener: DownloadProgressListener? = null
+
+    /** 绑定进度监听（全局锁下同时只有一个下载，直接替换即可）。 */
+    fun bindProgressListener(listener: DownloadProgressListener?) {
+        progressListener = listener
+    }
+
+    /** 按字节下载一个 URL，并上报进度。 */
+    private suspend fun downloadBytes(url: String): ByteArray {
+        return client.get(url) {
+            onDownload { bytesSentTotal, contentLength ->
+                progressListener?.onProgress(bytesSentTotal, contentLength)
+            }
+        }.body()
+    }
 
     // 下载 Mojang client_mappings（26.x 起已不再附带，会明确报错）
     suspend fun downloadMojangMappings(versionJsonUrl: String): String {
@@ -19,7 +42,8 @@ class MappingDownloader(private val client: HttpClient) {
         if (mappingsUrl == null) {
             throw Exception("该版本的 version.json 未附带 client_mappings（Mojang 未发布官方映射），请改用 Fabric / Yarn 映射")
         }
-        return client.get(mappingsUrl).bodyAsText()
+        val bytes = downloadBytes(mappingsUrl)
+        return bytes.decodeToString()
     }
 
     // 下载 Fabric Yarn 映射：查最新稳定版 -> 下载 yarn jar -> 解压 mappings/mappings.tiny
@@ -29,7 +53,7 @@ class MappingDownloader(private val client: HttpClient) {
             ?: yarnVersions.firstOrNull()
             ?: throw Exception("未找到 $gameVersion 的 Yarn 映射版本")
         val mavenUrl = "https://maven.fabricmc.net/net/fabricmc/yarn/${stable.version}/yarn-${stable.version}.jar"
-        val bytes = client.get(mavenUrl).body<ByteArray>()
+        val bytes = downloadBytes(mavenUrl)
         return extractEntry(bytes, "mappings/mappings.tiny")
             ?: throw Exception("Yarn jar 中未找到 mappings/mappings.tiny")
     }
@@ -71,8 +95,7 @@ class MappingDownloader(private val client: HttpClient) {
                     // 真实仓库中的 zip 文件名：`parchment-<mc>-<date>.zip`
                     // （officialExport-<date>.zip 为历史遗留命名，真实仓库中不存在，已移除）
                     val file = "parchment-$patch-$export.zip"
-                    val bytes = client.get("$repo/org/parchmentmc/data/parchment-$patch/$export/$file")
-                        .body<ByteArray>()
+                    val bytes = downloadBytes("$repo/org/parchmentmc/data/parchment-$patch/$export/$file")
                     val parsed = extractEntry(bytes, "parchment.json")
                     if (parsed != null) return parsed
                 }
@@ -90,7 +113,7 @@ class MappingDownloader(private val client: HttpClient) {
             if (target != null) {
                 val zipUrl = "https://maven.parchmentmc.org/org/parchmentmc/data/parchment/" +
                     "$target/parchment-$target-tiny.zip"
-                val bytes = client.get(zipUrl).body<ByteArray>()
+                val bytes = downloadBytes(zipUrl)
                 val parsed = extractEntry(bytes, "parchment.json")
                 if (parsed != null) return parsed
             }
@@ -127,7 +150,7 @@ class MappingDownloader(private val client: HttpClient) {
      */
     suspend fun downloadMcpSrg(mcVersion: String): String {
         val zipUrl = "https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp/$mcVersion/mcp-$mcVersion-srg.zip"
-        val bytes = client.get(zipUrl).body<ByteArray>()
+        val bytes = downloadBytes(zipUrl)
         return extractEntryBySuffix(bytes, "joined.srg")
             ?: throw Exception("MCP SRG zip 中缺少 joined.srg")
     }
@@ -145,7 +168,7 @@ class MappingDownloader(private val client: HttpClient) {
             ?: throw Exception("$mcVersion 无稳定的 MCP 映射（MCP 官方仅发布到 1.15，更晚版本需回退 Mojang 官方映射）")
         val zipUrl =
             "https://maven.minecraftforge.net/de/oceanlabs/mcp/mcp_stable/$version/mcp_stable-$version.zip"
-        val bytes = client.get(zipUrl).body<ByteArray>()
+        val bytes = downloadBytes(zipUrl)
         val methodsCsv = extractEntryBySuffix(bytes, "methods.csv")
             ?: throw Exception("MCP stable zip 中缺少 methods.csv")
         val fieldsCsv = extractEntryBySuffix(bytes, "fields.csv").orEmpty()

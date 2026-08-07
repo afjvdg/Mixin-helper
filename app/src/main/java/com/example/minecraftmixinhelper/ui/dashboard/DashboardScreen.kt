@@ -20,6 +20,7 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
     val versions by viewModel.versions.collectAsState()
     val status by viewModel.status.collectAsState()
     val activeIds by viewModel.activeIds.collectAsState()
+    val progress by viewModel.progress.collectAsState()
 
     // 加载器选项：parchment 随 forge/neoforge 一起下载，不再单列；mojang 官方映射并入 forge
     val loaders = listOf("ALL", "Fabric", "Forge", "NeoForge")
@@ -51,9 +52,25 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
                 Text("选择版本并点击下载以缓存映射", color = MaterialTheme.colorScheme.outline)
             is DashboardStatus.Loading -> {
                 Column {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    val percent = progress.percent
+                    if (percent != null) {
+                        LinearProgressIndicator(
+                            progress = { percent },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text(s.message, color = MaterialTheme.colorScheme.primary)
+                    if (progress.total != null) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)} · ${formatBytes(progress.speed)}/s",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
                 }
             }
             is DashboardStatus.Success -> {
@@ -121,4 +138,12 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
             }
         }
     }
+}
+
+/** 把字节数格式化为可读大小（KB / MB）。 */
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "${bytes}B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.1fKB", kb)
+    return String.format("%.2fMB", kb / 1024.0)
 }

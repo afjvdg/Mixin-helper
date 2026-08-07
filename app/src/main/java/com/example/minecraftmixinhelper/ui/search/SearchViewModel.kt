@@ -34,23 +34,24 @@ class SearchViewModel @Inject constructor(
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
-    // query / type / version / loader 状态流，250ms 防抖后触发搜索
+    // query / type / version / loader / field 状态流，250ms 防抖后触发搜索
     private val _query = MutableStateFlow("")
-    private val _type = MutableStateFlow("CLASS")
+    private val _type = MutableStateFlow("")      // 空 = 全部类型
     private val _version = MutableStateFlow("")
     private val _loader = MutableStateFlow("")
+    private val _field = MutableStateFlow("")     // 空 = 全部字段（可读名+混淆名+类名）
 
     init {
         viewModelScope.launch {
-            combine(_query, _type, _version, _loader) { q, t, v, l -> Quad(q, t, v, l) }
+            combine(_query, _type, _version, _loader, _field) { q, t, v, l, f -> Quint(q, t, v, l, f) }
                 .debounce(250)
-                .collect { (q, t, v, l) ->
+                .collect { (q, t, v, l, f) ->
                     if (q.isBlank()) {
                         _searchResults.value = emptyList()
                         _loading.value = false
                     } else {
                         _loading.value = true
-                        _searchResults.value = repository.fuzzySearch(q, t, v, l)
+                        _searchResults.value = repository.fuzzySearch(q, t, v, l, f)
                         _loading.value = false
                     }
                 }
@@ -62,6 +63,7 @@ class SearchViewModel @Inject constructor(
 
     fun setQuery(q: String) { _query.value = q }
     fun setType(t: String) { _type.value = t }
+    fun setField(f: String) { _field.value = f }
 
     /** 选择某个「版本 + 加载器」作为搜索范围；传 null 表示不限定。 */
     fun setVersionLoader(row: VersionLoaderRow?) {
@@ -80,10 +82,11 @@ class SearchViewModel @Inject constructor(
         _recentQueries.value = emptyList()
     }
 
-    private data class Quad(
+    private data class Quint(
         val query: String,
         val type: String,
         val version: String,
-        val loader: String
+        val loader: String,
+        val field: String
     )
 }

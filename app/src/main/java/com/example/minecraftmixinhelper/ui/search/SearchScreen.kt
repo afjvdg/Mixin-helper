@@ -30,21 +30,44 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
     val loading by viewModel.loading.collectAsState()
 
     var query by remember { mutableStateOf("") }
-    var searchType by remember { mutableStateOf("CLASS") }
+    var searchType by remember { mutableStateOf("") }   // 空 = 全部类型
+    var searchField by remember { mutableStateOf("") }  // 空 = 全部字段
     var selectedRow by remember { mutableStateOf<VersionLoaderRow?>(null) }
     var showDetail by remember { mutableStateOf<MappingEntity?>(null) }
 
-    // 只保留 class / method / field，无 "ALL"
+    // 类型：class / method / field；点击已选中项可取消回「全部」
     val types = listOf("CLASS", "METHOD", "FIELD")
+    // 字段：全部 / 可读名 / 混淆名 / 类名
+    val fields = listOf("全部", "可读名", "混淆名", "类名")
+    val fieldValues = mapOf("全部" to "", "可读名" to "deobf", "混淆名" to "obf", "类名" to "class")
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // 搜索类型切换
+        // 搜索类型切换（可取消回全部）
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             types.forEach { t ->
                 FilterChip(
                     selected = searchType == t,
-                    onClick = { searchType = t; viewModel.setType(t) },
+                    onClick = {
+                        // 再次点击已选中的类型 -> 取消，回到全部类型
+                        searchType = if (searchType == t) "" else t
+                        viewModel.setType(searchType)
+                    },
                     label = { Text(t) }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // 搜索字段切换（可读名 / 混淆名 / 类名 / 全部）
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            fields.forEach { label ->
+                FilterChip(
+                    selected = searchField == fieldValues[label],
+                    onClick = {
+                        searchField = fieldValues[label]!!
+                        viewModel.setField(searchField)
+                    },
+                    label = { Text(label) }
                 )
             }
         }

@@ -1,6 +1,8 @@
 package com.example.minecraftmixinhelper.ui.dashboard
 
 import com.example.minecraftmixinhelper.data.local.VersionEntity
+import com.example.minecraftmixinhelper.data.remote.DownloadProgressListener
+import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.repository.MappingRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,17 +14,26 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** 下载进度：已下载 / 总量（null 表示未知）、速度（字节/秒）。 */
+data class DownloadProgress(
+    val downloaded: Long = 0,
+    val total: Long? = null,
+    val speed: Long = 0,
+    val percent: Float? = null // 0..1；null 表示未知
+)
+
 /**
  * 应用级下载管理器（单例，独立于任何界面的生命周期）。
  *
  * - **后台下载**：使用应用级 [CoroutineScope]，用户离开 Dashboard 页面（如切到搜索页）
  *   甚至页面被重建时，下载仍继续。
- * - **全局下载锁**：同一时刻只允许一个下载任务。已有下载在进行时，再次触发会给出明确提示
- *   （而非无响应）。
+ * - **全局下载锁**：同一时刻只允许一个下载任务。已有下载在进行时，再次触发会给出明确提示。
+ * - **下载进度 + 速度**：通过 [MappingDownloader] 的字节级回调实时更新。
  */
 @Singleton
 class DownloadManager @Inject constructor(
-    private val repository: MappingRepository
+    repository: MappingRepository,
+    downloader: MappingDownloader
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -35,12 +46,41 @@ class DownloadManager @Inject constructor(
     private val _status = MutableStateFlow<DashboardStatus>(DashboardStatus.Idle)
     val status: StateFlow<DashboardStatus> = _status.asStateFlow()
 
+    // 下载进度
+    private val _progress = MutableStateFlow<DownloadProgress>(DownloadProgress())
+    val progress: StateFlow<DownloadProgress> = _progress.asStateFlow()
+
+    private val _repository = repository
+
+    init {
+        // 把字节级进度回调接到 DownloadManager（单例全局锁保证同时只有一个下载）
+        downloader.bindProgressListener(object : DownloadProgressListener {
+            override fun onProgress(downloaded: Long, total: Long?) {
+                val start = lastTickTime
+                val now = System.currentTimeMillis()
+                val elapsed = (now - start).coerceAtLeast(1)
+                val speed = if (elapsed > 0) downloaded * 1000 / elapsed else 0L
+                lastTickTime = now
+                _progress.value = DownloadProgress(
+                    downloaded = downloaded,
+                    total = total,
+                    speed = speed,
+                    percent = if (total != null && total > 0) {
+                        (downloaded.toFloat() / total).coerceIn(0f, 1f)
+                    } else null
+                )
+            }
+        })
+    }
+
+    private var lastTickTime: Long = System.currentTimeMillis()
+
     /** 从远程刷新版本列表（后台执行）。 */
     fun refreshVersions() {
         scope.launch {
             _status.value = DashboardStatus.Loading("正在从远程获取版本列表...")
             try {
-                repository.fetchAndCacheVersions()
+                _repository.fetchAndCacheVersions()
                 _status.value = DashboardStatus.Success("版本列表已更新")
             } catch (e: Exception) {
                 _status.value = DashboardStatus.Error("获取版本失败: ${e.message}")
@@ -56,13 +96,15 @@ class DownloadManager @Inject constructor(
         }
         scope.launch {
             _activeIds.value = _activeIds.value + entity.id
+            _progress.value = DownloadProgress()
+            lastTickTime = System.currentTimeMillis()
             _status.value =
                 DashboardStatus.Loading("正在下载 ${entity.version} (${entity.loader})...")
             try {
                 val mappingType = entity.mappingType
-                    .ifBlank { repository.decideMappingType(entity.version, entity.loader) }
+                    .ifBlank { _repository.decideMappingType(entity.version, entity.loader) }
                 _status.value = DashboardStatus.Loading("正在下载 $mappingType 映射...")
-                repository.downloadAndParseMappings(
+                _repository.downloadAndParseMappings(
                     entity.version,
                     entity.versionJsonUrl,
                     mappingType,
