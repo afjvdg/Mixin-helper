@@ -8,6 +8,7 @@ import com.example.minecraftmixinhelper.data.remote.FabricApi
 import com.example.minecraftmixinhelper.data.remote.ForgeNeoForgeApi
 import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.remote.MojangApi
+import com.example.minecraftmixinhelper.domain.service.McVersionComparator
 import com.example.minecraftmixinhelper.domain.service.MojmapParser
 import com.example.minecraftmixinhelper.domain.service.ParchmentParser
 import com.example.minecraftmixinhelper.domain.service.TinyParser
@@ -15,6 +16,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 
 class MappingRepository @Inject constructor(
@@ -84,38 +89,64 @@ class MappingRepository @Inject constructor(
             }
     }
 
+    /**
+     * Forge 版本形如 `1.20.1-47.2.0`，这里把 `version` 归一化为 MC 版本
+     * （`1.20.1`），下载时按 MC 版本解析 Mojang 官方映射。
+     */
     private suspend fun fetchForgeVersions(): List<VersionEntity> {
         return extractMavenVersions(forgeApi.getForgeMetadata())
+            .mapNotNull { McVersionComparator.mcVersionOf("forge", it) }
+            .distinct()
             .take(10)
             .map {
                 VersionEntity(
-                    id = "${it}|forge",
+                    id = "$it|forge",
                     version = it,
                     loader = "forge",
-                    mappingType = "mojmap"
+                    mappingType = McVersionComparator.decideMappingType(it, "forge")
                 )
             }
     }
 
+    /**
+     * NeoForge 版本形如 `21.1.78`（对应 MC 1.21.1）、`26.2.0.49-beta`（对应 MC 26.2），
+     * 同样归一化为 MC 版本。
+     */
     private suspend fun fetchNeoForgeVersions(): List<VersionEntity> {
         return extractMavenVersions(forgeApi.getNeoForgeMetadata())
+            .mapNotNull { McVersionComparator.mcVersionOf("neoforge", it) }
+            .distinct()
             .take(10)
             .map {
                 VersionEntity(
-                    id = "${it}|neoforge",
+                    id = "$it|neoforge",
                     version = it,
                     loader = "neoforge",
-                    mappingType = "mojmap"
+                    mappingType = McVersionComparator.decideMappingType(it, "neoforge")
                 )
             }
     }
 
+    /**
+     * Parchment 版本列表：来自 Parchment 数据仓库的分支（versions/X.Y.x），
+     * 下载时再解析具体补丁版本（见 [MappingDownloader.downloadParchmentJson]）。
+     */
     private suspend fun fetchParchmentVersions(): List<VersionEntity> {
-        return extractMavenVersions(forgeApi.getParchmentMetadata())
+        val raw = forgeApi.getParchmentBranches()
+        val branches = try {
+            kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                .parseToJsonElement(raw).jsonArray
+                .mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        return branches
+            .filter { it.startsWith("versions/") && it.endsWith(".x") }
+            .map { it.removePrefix("versions/").removeSuffix(".x") } // "1.21"
             .take(20)
             .map {
                 VersionEntity(
-                    id = "${it}|parchment",
+                    id = "$it|parchment",
                     version = it,
                     loader = "parchment",
                     mappingType = "parchment"
@@ -146,13 +177,23 @@ class MappingRepository @Inject constructor(
                 TinyParser.parse(rawTiny)
             }
             "parchment" -> {
-                val rawJson = downloader.downloadParchmentJson(version)
-                val enrich = ParchmentParser.parse(rawJson)
-                val rawMojmap = downloader.downloadMojangMappings(versionJsonUrl)
-                applyParchment(MojmapParser.parse(rawMojmap), enrich)
+                // Forge / NeoForge 的 Parchment 数据可能缺失，优雅降级为纯 Mojmap；
+                // 专门的 Parchment 源则如实报错
+                val enrich = try {
+                    ParchmentParser.parse(downloader.downloadParchmentJson(version))
+                } catch (e: Exception) {
+                    if (loader in setOf("forge", "neoforge")) null else throw e
+                }
+                val rawMojmap = downloader.downloadMojangMappings(
+                    resolveMojangVersionJsonUrl(version, versionJsonUrl, loader)
+                )
+                val mojmap = MojmapParser.parse(rawMojmap)
+                if (enrich != null) applyParchment(mojmap, enrich) else mojmap
             }
             else -> { // mojmap
-                val rawMojmap = downloader.downloadMojangMappings(versionJsonUrl)
+                val rawMojmap = downloader.downloadMojangMappings(
+                    resolveMojangVersionJsonUrl(version, versionJsonUrl, loader)
+                )
                 MojmapParser.parse(rawMojmap)
             }
         }
@@ -176,6 +217,29 @@ class MappingRepository @Inject constructor(
         versionDao.markCached(version, loader)
     }
 
+    /**
+     * 解析 Mojang 官方映射的 version.json URL：
+     * - Mojang / Parchment 源在版本列表阶段已保存真实 URL，直接使用；
+     * - Forge / NeoForge 源没有该 URL，按 MC 版本查一次 manifest 得到。
+     */
+    private suspend fun resolveMojangVersionJsonUrl(
+        version: String,
+        versionJsonUrl: String,
+        loader: String
+    ): String {
+        if (versionJsonUrl.isNotBlank()) return versionJsonUrl
+        if (loader !in setOf("forge", "neoforge")) {
+            throw Exception("缺少 version.json URL，无法下载 Mojang 官方映射")
+        }
+        val manifest = mojangApi.getVersionManifest()
+        val entry = manifest.versions.firstOrNull { it.type == "release" && it.id == version }
+            ?: throw Exception(
+                "Mojang 版本清单中未找到 $version（$loader），无法下载官方映射，" +
+                    "该加载器版本可能对应过旧的 MC 版本"
+            )
+        return entry.url
+    }
+
     private fun applyParchment(
         mojmap: List<MojmapParser.ParsedMapping>,
         enrich: ParchmentParser.ParchmentData
@@ -183,7 +247,8 @@ class MappingRepository @Inject constructor(
         return mojmap.map { pm ->
             when (pm.type) {
                 "METHOD" -> {
-                    val key = "${pm.className}|${pm.deobfuscatedName}|${pm.descriptor}"
+                    val key = "${pm.className}|${pm.deobfuscatedName}|" +
+                        ParchmentParser.canonicalDescriptor(pm.descriptor.orEmpty())
                     val info = enrich.byMethod[key]
                     if (info != null) pm.copy(paramNames = info.paramNames, javadoc = info.javadoc) else pm
                 }
@@ -205,6 +270,21 @@ class MappingRepository @Inject constructor(
             filterResults(results, type, version)
         } catch (e: Exception) {
             filterResults(mappingDao.searchMappings(query).first(), type, version)
+        }
+    }
+
+    /** 实时建议：与搜索同源的轻量查询，仅返回前 [limit] 条。 */
+    suspend fun suggest(
+        query: String,
+        type: String = "ALL",
+        version: String = "",
+        limit: Int = 10
+    ): List<MappingEntity> {
+        if (query.isBlank()) return emptyList()
+        return try {
+            filterResults(mappingDao.suggestFts(toFtsMatchQuery(query), limit), type, version)
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 
@@ -231,32 +311,10 @@ class MappingRepository @Inject constructor(
 
     suspend fun getDownloadedVersions(): List<String> = mappingDao.getDownloadedVersions()
 
-    // ==================== 映射类型自动决策（数字元组比较，仅兜底） ====================
+    // ==================== 映射类型自动决策（仅兜底） ====================
 
-    fun decideMappingType(mcVersion: String, loader: String): String {
-        val tuple = versionTuple(mcVersion)
-        return when (loader.lowercase()) {
-            "fabric" -> if (tupleGe(tuple, versionTuple("1.21.11"))) "mojmap" else "yarn"
-            "forge", "neoforge" -> if (tupleGe(tuple, versionTuple("1.18"))) "parchment" else "mojmap"
-            else -> "mojmap"
-        }
-    }
-
-    // 版本号数字元组按位比较（a >= b 返回 true）
-    private fun tupleGe(a: List<Int>, b: List<Int>): Boolean {
-        val n = maxOf(a.size, b.size)
-        for (i in 0 until n) {
-            val x = a.getOrElse(i) { 0 }
-            val y = b.getOrElse(i) { 0 }
-            if (x != y) return x > y
-        }
-        return true
-    }
-
-    private fun versionTuple(v: String): List<Int> =
-        v.split(Regex("""[.\-]""")).map { part ->
-            part.filter { it.isDigit() }.toIntOrNull() ?: 0
-        }
+    fun decideMappingType(mcVersion: String, loader: String): String =
+        McVersionComparator.decideMappingType(mcVersion, loader)
 
     private companion object {
         val MAVEN_VERSION_RE = Regex("""<version>(.+?)</version>""")

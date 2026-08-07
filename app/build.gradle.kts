@@ -74,4 +74,7 @@ dependencies {
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+
+    // Unit tests（纯 JVM：解析器 / 版本比较）
+    testImplementation("junit:junit:4.13.2")
 }

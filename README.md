@@ -14,6 +14,7 @@
 - 真实映射下载与解析：Mojang client_mappings / Yarn(Tiny) / Parchment
 - 离线映射存储（Room + FTS4 全文搜索）
 - 模糊搜索（FTS4 前缀匹配 + LIKE 回退），可按类型 / 版本过滤
+- 搜索框实时建议下拉（输入即提示，点击填入精确词）+ 最近搜索记录
 - 搜索结果详情对话框：描述符 / 参数 / 参数名 / 返回类型 / Javadoc + 一键复制
 - 下载状态持久反馈（成功 / 失败不会被进度条冲掉）
 
@@ -23,6 +24,7 @@
 - Real mapping download & parse: Mojang client_mappings / Yarn (Tiny) / Parchment
 - Offline mapping storage (Room + FTS4 full-text search)
 - Fuzzy search (FTS4 prefix match + LIKE fallback), filterable by type / version
+- Live suggestions in the search box (click to fill) + recent search history
 - Result detail dialog: descriptor / params / param names / return type / Javadoc + copy buttons
 - Persistent download status feedback (success / failure is not overwritten by the progress bar)
 
@@ -42,8 +44,9 @@ This project comes with a complete GitHub Actions workflow. **As soon as you pus
 
 1. 检出代码
 2. 配置 JDK 17 + Gradle
-3. 执行 `./gradlew assembleDebug`
-4. 自动上传 `app-debug.apk` 到 Artifacts（保留 30 天）
+3. 执行单元测试 `./gradlew testDebugUnitTest`（解析器 / 版本比较）
+4. 执行 `./gradlew assembleDebug`
+5. 自动上传 `app-debug.apk` 到 Artifacts（保留 30 天）
 
 ### 如何获取 APK / How to Get the APK
 
@@ -71,13 +74,16 @@ app/build/outputs/apk/debug/app-debug.apk
 ## 功能列表 / Features
 
 - ✅ 真实下载 Mojang client_mappings（26.x+ 已停止发布，会明确报错并建议改用 Fabric/Yarn）
-- ✅ 下载并解析 Yarn mappings.tiny（Tiny v1 / v2），描述符类名重映射为可读名
+- ✅ 下载并解析 Yarn mappings.tiny（Tiny v2），描述符类名重映射为可读名
 - ✅ 下载并解析 Parchment parchment.json（参数名 + Javadoc），与 Mojmap 合并
+- ✅ Forge / NeoForge 下载：自动从加载器版本解析 MC 版本并解析官方映射
 - ✅ 多源版本列表（Mojang / Fabric / Forge / NeoForge / Parchment），单源失败不影响其他源
 - ✅ 模糊搜索（FTS4 前缀自动补全 + LIKE 回退），支持类型 / 版本过滤
+- ✅ 搜索框实时建议下拉 + 最近搜索（会话内）
 - ✅ 搜索结果详情对话框 + 一键复制名称 / 描述符
 - ✅ 离线映射数据库（Room + FTS4），含 v1→v2→v3 迁移
 - ✅ 下载状态持久反馈 + 重试
+- ✅ 单元测试：4 个解析器（AsmDescriptor / Mojmap / Tiny / Parchment）+ 版本比较
 
 ---
 
@@ -95,8 +101,9 @@ app/build/outputs/apk/debug/app-debug.apk
 ## 已知行为（非 bug）/ Known Behavior (not bugs)
 
 - 26.x 起新版 MC 的 version.json 已不再附带 `client_mappings`（Mojang 官方停止发布）→ 下载 Mojmap 会明确报错并提示改用 Fabric / Yarn。
+- Forge / NeoForge 版本的下载依赖 Mojang 官方映射：仅 1.17+ 有官方映射，更早版本会明确报错。
 - Parchment 并非所有版本都有数据 → maven.parchmentmc.org 查不到时会明确报错。
-- FTS4 前缀匹配写法：`MATCH "\"词\"*"`，输入会先清洗特殊字符。
+- FTS4 前缀匹配写法：`MATCH "\"词\"*"`，输入会先清洗特殊字符；用户无需了解该语法（搜索框已内置建议）。
 
 ---
 

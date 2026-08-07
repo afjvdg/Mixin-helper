@@ -57,9 +57,11 @@ class DashboardViewModel @Inject constructor(
     fun downloadMappings(entity: VersionEntity) {
         viewModelScope.launch {
             _status.value =
-                DashboardStatus.Loading("正在决定映射类型并下载 ${entity.version} (${entity.loader})...")
+                DashboardStatus.Loading("正在下载 ${entity.version} (${entity.loader})...")
             try {
-                val mappingType = repository.decideMappingType(entity.version, entity.loader)
+                // 优先使用版本列表阶段确定的映射类型；为空时兜底决策
+                val mappingType = entity.mappingType
+                    .ifBlank { repository.decideMappingType(entity.version, entity.loader) }
                 _status.value = DashboardStatus.Loading("正在下载 $mappingType 映射...")
                 repository.downloadAndParseMappings(
                     entity.version,
