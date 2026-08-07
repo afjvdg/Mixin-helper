@@ -10,6 +10,7 @@ import com.example.minecraftmixinhelper.data.remote.ForgeNeoForgeApi
 import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.remote.MojangApi
 import com.example.minecraftmixinhelper.domain.service.McVersionComparator
+import com.example.minecraftmixinhelper.domain.service.McpParser
 import com.example.minecraftmixinhelper.domain.service.MojmapParser
 import com.example.minecraftmixinhelper.domain.service.ParchmentParser
 import com.example.minecraftmixinhelper.domain.service.TinyParser
@@ -163,9 +164,24 @@ class MappingRepository @Inject constructor(
         loader: String
     ) = withContext(Dispatchers.IO) {
         val parsed: List<MojmapParser.ParsedMapping> = when (mappingType) {
-            "mcp" -> throw Exception(
-                "$version 的 Forge 使用 MCP 映射，暂不支持在线下载（MCP 已停止维护，Forge 自 1.17 起改用官方 mojmap）"
-            )
+            "mcp" -> {
+                // MCP 映射（Forge <1.17）：来源为 Forge Maven（mcpbot 已下线）。
+                // MCP 官方仅发布到 1.15，1.16.x 无稳定 MCP → 回退 Mojang 官方映射。
+                val mcp = try {
+                    val srg = downloader.downloadMcpSrg(version)
+                    val csv = downloader.downloadMcpStable(version)
+                    McpParser.parse(srg, csv)
+                } catch (e: Exception) {
+                    null
+                }
+                if (mcp != null) mcp else {
+                    MojmapParser.parse(
+                        downloader.downloadMojangMappings(
+                            resolveMojangVersionJsonUrl(version, versionJsonUrl, loader)
+                        )
+                    )
+                }
+            }
             "yarn" -> {
                 val rawTiny = downloader.downloadYarnMappings(version)
                 TinyParser.parse(rawTiny)

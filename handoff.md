@@ -122,3 +122,20 @@
 4. **后台下载 + 全局下载锁**：新增应用级单例 `DownloadManager`（独立 CoroutineScope），下载不再随界面销毁而取消；同一时刻只允许一个下载，再次触发给出提示；进行中所有下载按钮禁用。
 5. **移除独立 mojmap 源**：加载器选项改为 `ALL/Fabric/Forge/NeoForge`（Mojang 官方映射并入 forge）。
 6. **搜索重构**：删除联想菜单（结果直接在结果区实时呈现）；类型只保留 `CLASS/METHOD/FIELD`；版本范围删除“全部版本”，改为“版本 (加载器)”对；`fuzzySearch` 合并 FTS 前缀 + LIKE 子串匹配（输入 `pla` 可命中 play/player）。
+
+## 11. MCP 映射在线下载支持（2026-08-07）
+
+背景：Forge <1.17 使用 MCP 映射，此前代码对 MCP 直接抛「暂不支持在线下载」。原 MCPBot（mcpbot.bspk.rs）已下线，但 MCP 数据**稳定、全面**地托管在 **Forge Maven**（`maven.minecraftforge.net/de/oceanlabs/mcp/`），无需真机，可持续在线下载。
+
+来源与格式（已实网核实）：
+- `mcp/<mc>/mcp-<mc>-srg.zip` → 内含 `joined.srg`：`PK:` 包 / `CL:` 类 / `FD:` 字段 / `MD:` 方法（混淆名 -> SRG 名；类名即可读类名）。
+- `mcp_stable/<build>-<family>/mcp_stable-<build>-<family>.zip` → 内含 `methods.csv` / `fields.csv`，列 `searge,name,side,desc`，**MCP 可读名在 `name`（index 1）**，`desc`（index 3）是 Javadoc。覆盖 1.7.10 ~ 1.15。
+- mcp_stable 版本形如 `<build>-<family>`（`39-1.12`、`22-1.8.9`、`12-1.7.10`）；family 是映射家族，从 `mcp_stable/maven-metadata.xml` 解析。
+
+实现：
+- 新增 `McpParser`（domain/service）：解析 joined.srg + CSV → `List<ParsedMapping>`（类/方法/字段），描述符引用可读类名；`parseNameCsv` 尊重引号内逗号。
+- `MappingDownloader.downloadMcpSrg` / `downloadMcpStable`：从 Forge Maven 下载并解压；`pickMcpStableVersion` 按 MC 版本匹配最长 family 并取最高 build。
+- `MappingRepository` 的 `mcp` 分支：先下载 MCP；**1.16.x 无稳定 MCP → 回退 Mojang 官方映射**（MCP 仅发布到 1.15）。
+- 新增 `McpParserTest`（5 条断言，含引号逗号 Javadoc）。
+
+> 注意：Forge 1.16.x 在列表中标为 MCP，但下载时会因无稳定 MCP 自动回退 mojmap；若该版本无官方 client_mappings 则报错。
