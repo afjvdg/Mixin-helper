@@ -28,6 +28,7 @@ package com.example.minecraftmixinhelper.domain.service
  */
 object TinyParser {
 
+    private val V2_HEADER_RE = Regex("""^tiny\s+(\d+)\s+(\d+)\s+(.+)$""")
     private val DESC_CLASS_RE = Regex("""L([\w/$]+);""")
 
     fun parse(raw: String): List<MojmapParser.ParsedMapping> {
@@ -247,9 +248,5 @@ object TinyParser {
             val mapped = classMap[cls] ?: cls
             "L$mapped;"
         }
-    }
-
-    private companion object {
-        val V2_HEADER_RE = Regex("""^tiny\s+(\d+)\s+(\d+)\s+(.+)$""")
     }
 }
