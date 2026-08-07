@@ -34,80 +34,57 @@ object TinyParser {
         require(headerMatch != null) { "不是合法的 Tiny 映射文件: ${lines.first()}" }
 
         val namespaces = headerMatch.groupValues[3].split(Regex("""\s+""")).filter { it.isNotEmpty() }
-        val sourceIdx = pickIndex(namespaces, "intermediary", "named", "yarn", "hashed")
-            ?: 0
-        val targetIdx = pickIndex(namespaces, "mojang", "official")
-            ?: (namespaces.lastIndex)
-
+        val sourceIdx = pickIndex(namespaces, "intermediary", "named", "yarn", "hashed") ?: 0
+        val targetIdx = pickIndex(namespaces, "mojang", "official") ?: namespaces.lastIndex
+        val classMap = mutableMapOf<String, String>()
         val result = mutableListOf<MojmapParser.ParsedMapping>()
-        val classMap = mutableMapOf<String, String>() // source class (slashes) -> target class (slashes)
-        var currentClass: String? = null // 当前类（源命名空间，斜杠形式）
 
+        // Tiny 文件的类通常按字典序排列。成员描述符可以引用稍后才出现的类，
+        // 所以先完整收集类映射，再解析成员并重映射其描述符。
+        for (line in lines.drop(1)) {
+            if (line.firstOrNull() != 'c') continue
+            val parts = line.substring(1).trim().split(Regex("""\s+"""))
+            if (parts.size <= maxOf(sourceIdx, targetIdx)) continue
+            val source = parts[sourceIdx]
+            val target = parts[targetIdx]
+            classMap[source] = target
+            result.add(
+                MojmapParser.ParsedMapping(
+                    type = "CLASS",
+                    className = target.replace('/', '.'),
+                    obfuscatedName = source.replace('/', '.'),
+                    deobfuscatedName = target.replace('/', '.')
+                )
+            )
+        }
+
+        var currentClass: String? = null
         for (line in lines.drop(1)) {
             val token = line.firstOrNull() ?: continue
             val parts = line.substring(1).trim().split(Regex("""\s+"""))
-            if (parts.isEmpty()) continue
-
             when (token) {
-                'c' -> {
-                    // c <ns0名> <ns1名> ...（所有者从本行起继承）
-                    if (parts.size > maxOf(sourceIdx, targetIdx)) {
-                        val source = parts[sourceIdx]
-                        val target = parts[targetIdx]
-                        currentClass = source
-                        classMap[source] = target
-                        result.add(
-                            MojmapParser.ParsedMapping(
-                                type = "CLASS",
-                                className = target.replace('/', '.'),
-                                obfuscatedName = source.replace('/', '.'),
-                                deobfuscatedName = target.replace('/', '.')
-                            )
-                        )
-                    }
-                }
-                'f' -> {
-                    // f <desc> <ns0名> <ns1名> ...（owner = 最近的类）
-                    if (currentClass != null && parts.size >= 1 + maxOf(sourceIdx, targetIdx) + 1) {
-                        val desc = parts[0]
-                        val obf = parts[1 + sourceIdx]
-                        val named = parts[1 + targetIdx]
-                        result.add(
-                            MojmapParser.ParsedMapping(
-                                type = "FIELD",
-                                className = remapClass(currentClass, classMap),
-                                obfuscatedName = obf,
-                                deobfuscatedName = named,
-                                descriptor = remapDescriptor(desc, classMap)
-                            )
-                        )
-                    }
-                }
-                'm' -> {
-                    // m <desc> <ns0名> <ns1名> ...（owner = 最近的类）
-                    if (currentClass != null && parts.size >= 1 + maxOf(sourceIdx, targetIdx) + 1) {
-                        val desc = parts[0]
-                        val obf = parts[1 + sourceIdx]
-                        val named = parts[1 + targetIdx]
-                        val parsed = try {
-                            AsmDescriptorParser.parse(desc)
-                        } catch (e: Exception) {
-                            null
-                        }
-                        result.add(
-                            MojmapParser.ParsedMapping(
-                                type = "METHOD",
-                                className = remapClass(currentClass, classMap),
-                                obfuscatedName = obf,
-                                deobfuscatedName = named,
-                                descriptor = remapDescriptor(desc, classMap),
+                'c' -> currentClass = parts.getOrNull(sourceIdx)
+                'f', 'm' -> {
+                    val owner = currentClass ?: continue
+                    if (parts.size < 1 + maxOf(sourceIdx, targetIdx) + 1) continue
+                    val descriptor = remapDescriptor(parts[0], classMap)
+                    val mapping = MojmapParser.ParsedMapping(
+                        type = if (token == 'f') "FIELD" else "METHOD",
+                        className = remapClass(owner, classMap),
+                        obfuscatedName = parts[1 + sourceIdx],
+                        deobfuscatedName = parts[1 + targetIdx],
+                        descriptor = descriptor
+                    )
+                    result.add(
+                        if (token == 'm') {
+                            val parsed = runCatching { AsmDescriptorParser.parse(descriptor) }.getOrNull()
+                            mapping.copy(
                                 params = parsed?.parameters ?: emptyList(),
                                 returnType = parsed?.returnType
                             )
-                        )
-                    }
+                        } else mapping
+                    )
                 }
-                // 'p'（参数行）与 'v'（局部变量行）暂不消费
             }
         }
         return result

@@ -55,22 +55,21 @@ object AsmDescriptorParser {
 
     private fun parseOne(s: String, start: Int): Pair<String, Int> {
         var i = start
-        val sb = StringBuilder()
+        var dimensions = 0
         while (i < s.length && s[i] == '[') {
-            sb.append("[]")
+            dimensions++
             i++
         }
+        val suffix = "[]".repeat(dimensions)
         return when {
             i < s.length && s[i] == 'L' -> {
                 val end = s.indexOf(';', i)
                 require(end > i) { "对象类型描述符未闭合: $s" }
                 val className = s.substring(i + 1, end).replace('/', '.')
-                sb.append(className)
-                sb.toString() to (end + 1)
+                (className + suffix) to (end + 1)
             }
             i < s.length && s[i] in PRIMITIVES -> {
-                sb.append(PRIMITIVES[s[i]])
-                sb.toString() to (i + 1)
+                (PRIMITIVES[s[i]] + suffix) to (i + 1)
             }
             else -> error("无法解析描述符片段: '${if (i < s.length) s[i] else "EOF"}' in $s")
         }

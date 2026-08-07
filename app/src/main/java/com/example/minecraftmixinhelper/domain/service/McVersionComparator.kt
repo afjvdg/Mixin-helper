@@ -72,6 +72,6 @@ object McVersionComparator {
             else -> base
         } ?: return null
         // 兜底校验：MC 版本必须以 `数字.数字` 开头
-        return mcVersion.takeIf { it.matches(Regex("""^\d+\.\d+""")) }
+        return mcVersion.takeIf { it.containsMatchIn(Regex("""^\d+\.\d+""")) }
     }
 }

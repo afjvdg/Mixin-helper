@@ -22,7 +22,7 @@ class TinyParserTest {
         val parsed = TinyParser.parse(resource("mapping1.tiny"))
         assertEquals(6, parsed.size)
         assertTrue(parsed.all { it.type == "CLASS" })
-        assertEquals("com.github.logicf.App", parsed[0].className)
+        assertEquals("com.github.logicf.Main", parsed[0].className)
         assertEquals("com.github.logicf.App", parsed[0].obfuscatedName)
         assertEquals("com.github.logicf.Main", parsed[0].deobfuscatedName)
     }
