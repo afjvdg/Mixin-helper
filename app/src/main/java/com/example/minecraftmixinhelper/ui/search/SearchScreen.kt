@@ -12,6 +12,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import com.example.minecraftmixinhelper.data.local.MappingEntity
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
