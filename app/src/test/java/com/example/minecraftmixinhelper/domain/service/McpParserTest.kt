@@ -70,8 +70,8 @@ class McpParserTest {
         // 静态方法 func_5000 有 2 个参数（Lnet/...; J）：槽位 0、1（long 占 2 槽? 见下）
         val srg = """
             CL: aaa net/minecraft/server/MinecraftServer
-            MD: aaa/func_1000 (Lnet/minecraft/entity/Entity;I)V net/minecraft/server/MinecraftServer/func_1000 (Lnet/minecraft/entity/Entity;I)V
-            MD: aaa/func_5000 (Lnet/minecraft/entity/Entity;J)V net/minecraft/server/MinecraftServer/func_5000 (Lnet/minecraft/entity/Entity;J)V
+            MD: aaa/func_1000_a (Lnet/minecraft/entity/Entity;I)V net/minecraft/server/MinecraftServer/func_1000_a (Lnet/minecraft/entity/Entity;I)V
+            MD: aaa/func_5000_b (Lnet/minecraft/entity/Entity;J)V net/minecraft/server/MinecraftServer/func_5000_b (Lnet/minecraft/entity/Entity;J)V
         """.trimIndent()
         val paramsCsv = """
             param,name,side
@@ -86,11 +86,11 @@ class McpParserTest {
         )
         val parsed = McpParser.parse(srg, csv)
 
-        val m1 = parsed.first { it.obfuscatedName == "func_1000" }
+        val m1 = parsed.first { it.obfuscatedName == "func_1000_a" }
         // 非静态：从槽位 1 起 → entity(1), count(2)
         assertEquals(listOf("entity", "count"), m1.paramNames)
 
-        val m2 = parsed.first { it.obfuscatedName == "func_5000" }
+        val m2 = parsed.first { it.obfuscatedName == "func_5000_b" }
         // 有槽位 0 → 视为静态：从 0 起 → entity(0), seed(1)，long 占 2 槽
         assertEquals(listOf("entity", "seed"), m2.paramNames)
     }
