@@ -65,7 +65,7 @@ class TinyParserTest {
     }
 
     @Test
-    fun `解析 Yarn 风格 tiny v2（intermediary -> named）`() {
+    fun `解析 Yarn 风格 tiny v2（intermediary to named）`() {
         val raw = """
             tiny	2	0	intermediary	named
             c	net/minecraft/class_1	net/minecraft/world/entity/Entity
