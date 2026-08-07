@@ -20,18 +20,16 @@ sealed class DashboardStatus {
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
-    private val repository: MappingRepository
+    private val repository: MappingRepository,
+    private val downloadManager: DownloadManager
 ) : ViewModel() {
 
     private val _versions = MutableStateFlow<List<VersionEntity>>(emptyList())
     val versions: StateFlow<List<VersionEntity>> = _versions.asStateFlow()
 
-    private val _status = MutableStateFlow<DashboardStatus>(DashboardStatus.Idle)
-    val status: StateFlow<DashboardStatus> = _status.asStateFlow()
-
-    // 正在下载的版本 id 集合（用于禁用对应下载按钮，避免重复点击）
-    private val _downloadingIds = MutableStateFlow<Set<String>>(emptySet())
-    val downloadingIds: StateFlow<Set<String>> = _downloadingIds.asStateFlow()
+    // 全局状态与进行中的下载集合，均来自应用级 DownloadManager（支持后台下载）
+    val status: StateFlow<DashboardStatus> = downloadManager.status
+    val activeIds: StateFlow<Set<String>> = downloadManager.activeIds
 
     init {
         loadVersionsIfNeeded()
@@ -41,49 +39,12 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getVersions().collect { cached ->
                 _versions.value = cached
-                if (cached.isEmpty()) refreshVersions()
+                if (cached.isEmpty()) downloadManager.refreshVersions()
             }
         }
     }
 
-    fun refreshVersions() {
-        viewModelScope.launch {
-            _status.value = DashboardStatus.Loading("正在从远程获取版本列表...")
-            try {
-                repository.fetchAndCacheVersions()
-                _status.value = DashboardStatus.Success("版本列表已更新")
-            } catch (e: Exception) {
-                _status.value = DashboardStatus.Error("获取版本失败: ${e.message}")
-            }
-        }
-    }
+    fun refreshVersions() = downloadManager.refreshVersions()
 
-    fun downloadMappings(entity: VersionEntity) {
-        // 防止同一版本重复点击触发多次下载
-        if (entity.id in _downloadingIds.value) return
-        viewModelScope.launch {
-            _downloadingIds.value = _downloadingIds.value + entity.id
-            _status.value =
-                DashboardStatus.Loading("正在下载 ${entity.version} (${entity.loader})...")
-            try {
-                // 优先使用版本列表阶段确定的映射类型；为空时兜底决策
-                val mappingType = entity.mappingType
-                    .ifBlank { repository.decideMappingType(entity.version, entity.loader) }
-                _status.value = DashboardStatus.Loading("正在下载 $mappingType 映射...")
-                repository.downloadAndParseMappings(
-                    entity.version,
-                    entity.versionJsonUrl,
-                    mappingType,
-                    entity.loader
-                )
-                _status.value = DashboardStatus.Success(
-                    "✓ ${entity.version} (${entity.loader}) 映射下载成功，已缓存到本地！"
-                )
-            } catch (e: Exception) {
-                _status.value = DashboardStatus.Error("下载失败: ${e.message}")
-            } finally {
-                _downloadingIds.value = _downloadingIds.value - entity.id
-            }
-        }
-    }
+    fun downloadMappings(entity: VersionEntity) = downloadManager.download(entity)
 }

@@ -4,6 +4,7 @@ import com.example.minecraftmixinhelper.data.local.MappingDao
 import com.example.minecraftmixinhelper.data.local.MappingEntity
 import com.example.minecraftmixinhelper.data.local.VersionDao
 import com.example.minecraftmixinhelper.data.local.VersionEntity
+import com.example.minecraftmixinhelper.data.local.VersionLoaderRow
 import com.example.minecraftmixinhelper.data.remote.FabricApi
 import com.example.minecraftmixinhelper.data.remote.ForgeNeoForgeApi
 import com.example.minecraftmixinhelper.data.remote.MappingDownloader
@@ -32,11 +33,13 @@ class MappingRepository @Inject constructor(
     // ==================== 多源版本列表 ====================
 
     suspend fun fetchAndCacheVersions() = withContext(Dispatchers.IO) {
+        // 先取 Minecraft 官方「正式版」版本列表作为权威集合，供各加载器源对照过滤，
+        // 从而剔除预览版（如 1.7.10pre4）与垃圾版本号。
+        val supported = getSupportedMcVersions()
         val sources = listOf<suspend () -> List<VersionEntity>>(
-            { fetchMojmapVersions() },
-            { fetchFabricVersions() },
-            { fetchForgeVersions() },
-            { fetchNeoForgeVersions() }
+            { fetchFabricVersions(supported) },
+            { fetchForgeVersions(supported) },
+            { fetchNeoForgeVersions(supported) }
         )
         val collected = mutableListOf<VersionEntity>()
         for (src in sources) {
@@ -54,34 +57,33 @@ class MappingRepository @Inject constructor(
     }
 
     /**
-     * Mojang 官方映射（mojmap）源。
-     * 过滤规则：只删去 1.13.x 系列（Mojang 未提供该系列官方映射）与 26.x 及以上
-     * （MC 26+ 不再混淆，无需映射）。其余（含 1.12.2 及更早）全部保留。
+     * 受支持的 MC 正式版集合（作为各加载器版本列表的过滤基准）：
+     * - 仅正式版（type == release，天然排除 1.7.10pre4 等预览版）
+     * - 自 1.7.10 起
+     * - 排除 1.13.x 系列（Mojang 未提供该系列官方映射）
+     * - 排除 26.x 及以上（MC 26+ 不再混淆，无需映射）
      */
-    private suspend fun fetchMojmapVersions(): List<VersionEntity> {
+    private suspend fun getSupportedMcVersions(): Set<String> {
         val manifest = mojangApi.getVersionManifest()
         return manifest.versions
+            .asSequence()
             .filter { it.type == "release" }
-            .filter { isSupportedMcVersion(it.id) }
-            .map {
-                VersionEntity(
-                    id = "${it.id}|mojmap",
-                    version = it.id,
-                    loader = "mojmap",
-                    mappingType = "mojmap",
-                    versionJsonUrl = it.url
-                )
-            }
+            .map { it.id }
+            .filter { isSupportedMcVersion(it) }
+            .toSet()
     }
 
-    private suspend fun fetchFabricVersions(): List<VersionEntity> {
-        return fabricApi.getYarnVersions()
+    /** Fabric：以启动器支持的「游戏版本列表」（/v2/versions/game）为源，对照正式版集合过滤。 */
+    private suspend fun fetchFabricVersions(supported: Set<String>): List<VersionEntity> {
+        return fabricApi.getGameVersions()
             .filter { it.stable }
-            .filter { isSupportedMcVersion(it.gameVersion) }
+            .map { it.version }
+            .filter { it in supported }
+            .sortedWith { a, b -> McVersionComparator.compare(b, a) }
             .map {
                 VersionEntity(
-                    id = "${it.gameVersion}|fabric",
-                    version = it.gameVersion,
+                    id = "$it|fabric",
+                    version = it,
                     loader = "fabric",
                     mappingType = "yarn"
                 )
@@ -89,13 +91,15 @@ class MappingRepository @Inject constructor(
     }
 
     /**
-     * Forge 版本形如 `1.20.1-47.2.0`，这里把 `version` 归一化为 MC 版本
-     * （`1.20.1`），下载时按 MC 版本解析 Mojang 官方映射。
+     * Forge 版本形如 `1.20.1-47.2.0`，归一化为 MC 版本（`1.20.1`）并与正式版集合
+     * 对照（剔除预览版/垃圾版本）。映射类型按版本区分：
+     * - <1.17 → MCP
+     * - >=1.17 → mojmap + Parchment（捆绑下载）
      */
-    private suspend fun fetchForgeVersions(): List<VersionEntity> {
+    private suspend fun fetchForgeVersions(supported: Set<String>): List<VersionEntity> {
         return extractMavenVersions(forgeApi.getForgeMetadata())
             .mapNotNull { McVersionComparator.mcVersionOf("forge", it) }
-            .filter { isSupportedMcVersion(it) }
+            .filter { it in supported }
             .distinct()
             .sortedWith { a, b -> McVersionComparator.compare(b, a) }
             .map {
@@ -110,12 +114,13 @@ class MappingRepository @Inject constructor(
 
     /**
      * NeoForge 版本形如 `21.1.78`（对应 MC 1.21.1）、`26.2.0.49-beta`（对应 MC 26.2），
-     * 同样归一化为 MC 版本。
+     * 归一化为 MC 版本并与正式版集合对照。1.0.3 / 1.0.4 等早期垃圾版本号会因
+     * 归一化后不在正式版集合中而被剔除。始终基于 mojmap + Parchment。
      */
-    private suspend fun fetchNeoForgeVersions(): List<VersionEntity> {
+    private suspend fun fetchNeoForgeVersions(supported: Set<String>): List<VersionEntity> {
         return extractMavenVersions(forgeApi.getNeoForgeMetadata())
             .mapNotNull { McVersionComparator.mcVersionOf("neoforge", it) }
-            .filter { isSupportedMcVersion(it) }
+            .filter { it in supported }
             .distinct()
             .sortedWith { a, b -> McVersionComparator.compare(b, a) }
             .map {
@@ -129,9 +134,13 @@ class MappingRepository @Inject constructor(
     }
 
     /**
-     * 版本支持过滤：只删去 1.13.x 系列（`1.13` / `1.13.1` / `1.13.2`）与 26.x 及以上。
+     * 版本支持过滤：
+     * - 自 1.7.10 起（更早版本各加载器/官方映射均不适用）
+     * - 排除 1.13.x 系列（Mojang 未提供官方映射）
+     * - 排除 26.x 及以上（MC 26+ 不再混淆）
      */
     private fun isSupportedMcVersion(v: String): Boolean {
+        if (McVersionComparator.compare(v, "1.7.10") < 0) return false
         if (v.startsWith("1.13")) return false
         return McVersionComparator.compare(v, "26") < 0
     }
@@ -141,8 +150,8 @@ class MappingRepository @Inject constructor(
 
     private fun defaultVersions(): List<VersionEntity> = listOf(
         VersionEntity("1.20.1|fabric", "1.20.1", "fabric", "yarn"),
-        VersionEntity("1.20.1|forge", "1.20.1", "forge", "mojmap"),
-        VersionEntity("1.19.4|neoforge", "1.19.4", "neoforge", "mojmap")
+        VersionEntity("1.20.1|forge", "1.20.1", "forge", "parchment"),
+        VersionEntity("1.21.1|neoforge", "1.21.1", "neoforge", "parchment")
     )
 
     // ==================== 下载并解析映射 ====================
@@ -154,6 +163,9 @@ class MappingRepository @Inject constructor(
         loader: String
     ) = withContext(Dispatchers.IO) {
         val parsed: List<MojmapParser.ParsedMapping> = when (mappingType) {
+            "mcp" -> throw Exception(
+                "$version 的 Forge 使用 MCP 映射，暂不支持在线下载（MCP 已停止维护，Forge 自 1.17 起改用官方 mojmap）"
+            )
             "yarn" -> {
                 val rawTiny = downloader.downloadYarnMappings(version)
                 TinyParser.parse(rawTiny)
@@ -245,39 +257,39 @@ class MappingRepository @Inject constructor(
 
     // ==================== 搜索（FTS4 前缀 + LIKE 回退） ====================
 
-    suspend fun fuzzySearch(query: String, type: String = "ALL", version: String = ""): List<MappingEntity> {
-        if (query.isBlank()) return emptyList()
-        return try {
-            val results = mappingDao.fuzzySearchFts(toFtsMatchQuery(query))
-            filterResults(results, type, version)
-        } catch (e: Exception) {
-            filterResults(mappingDao.searchMappings(query).first(), type, version)
-        }
-    }
-
-    /** 实时建议：与搜索同源的轻量查询，仅返回前 [limit] 条。 */
-    suspend fun suggest(
+    suspend fun fuzzySearch(
         query: String,
         type: String = "ALL",
         version: String = "",
-        limit: Int = 10
+        loader: String = ""
     ): List<MappingEntity> {
         if (query.isBlank()) return emptyList()
-        return try {
-            filterResults(mappingDao.suggestFts(toFtsMatchQuery(query), limit), type, version)
+        // 同时使用 FTS 前缀匹配（性能好）与 LIKE 子串匹配（覆盖「包含」场景），
+        // 例如输入 "pla" 既能命中 play / player（前缀），也能命中含 "pla" 的其他名称。
+        val fts = try {
+            mappingDao.fuzzySearchFts(toFtsMatchQuery(query))
         } catch (e: Exception) {
             emptyList()
         }
+        val like = try {
+            mappingDao.searchMappings(query).first()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val merged = (fts + like).distinctBy { it.id }
+        return filterResults(merged, type, version, loader)
     }
 
     private fun filterResults(
         results: List<MappingEntity>,
         type: String,
-        version: String
+        version: String,
+        loader: String = ""
     ): List<MappingEntity> {
         return results.filter { m ->
             (type == "ALL" || m.type.equals(type, ignoreCase = true)) &&
-                (version.isBlank() || m.version == version)
+                (version.isBlank() || m.version == version) &&
+                (loader.isBlank() || m.loader.equals(loader, ignoreCase = true))
         }
     }
 
@@ -292,6 +304,10 @@ class MappingRepository @Inject constructor(
     }
 
     suspend fun getDownloadedVersions(): List<String> = mappingDao.getDownloadedVersions()
+
+    /** 已下载的「版本 + 加载器」对（搜索页版本范围选择用）。 */
+    suspend fun getDownloadedVersionLoaders(): List<VersionLoaderRow> =
+        mappingDao.getDownloadedVersionLoaders()
 
     // ==================== 映射类型自动决策（仅兜底） ====================
 

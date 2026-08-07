@@ -107,3 +107,18 @@
 3. **loader 改名 mojang→mojmap**：`fetchMojangVersions`→`fetchMojmapVersions`，loader="mojmap"。
 4. **版本过滤规则**：`isSupportedMcVersion` 只删 `1.13.x` 与 `>=26`（`McVersionComparator.compare(v,"26")<0`），其余全保留；forge/neoforge 不再 `take(10)` 截断，改为归一化 MC 版本后 `distinct()` + 版本降序排序。
 5. **UI**：加载器选项改为 `ALL/Mojmap/Fabric/Forge/NeoForge`，筛选行改 `horizontalScroll`（横向滑动，不再被挤压/垂直拉伸）；状态提示/进度条移到版本列表**上方**（不被遮住）；下载按钮用 `downloadingIds` 集合禁用防重复点击，已缓存条目不显示按钮。
+
+## 10. 映射类型区分 / 版本对照 / 下载与搜索重构（2026-08-07）
+
+现象（真机复现）：
+- forge 未区分 MCP 与 mojmap 版本；出现预览版（1.7.10pre4）与垃圾版本（neoforge 1.0.3/1.0.4）
+- fabric 版本不全（只有 1.21.11），且下载报 `不是合法的Tiny映射文件: v1 official intermediarynamed`
+- 下载可并发无提示；搜索有“全部版本”“ALL”选项；联想菜单不符合预期
+
+已修复：
+1. **Forge MCP / mojmap 区分**：`McVersionComparator.decideMappingType` 改为 forge <1.17→`mcp`、>=1.17→`parchment`（mojmap+Parchment 捆绑），neoforge 恒为 `parchment`。UI 用 `MappingTypeLabel` 显示 `MCP` / `Mojmap + Parchment`。mcp 下载会明确报“暂不支持”。
+2. **版本与 MC 正式版对照过滤**：`getSupportedMcVersions()` 取 Mojang manifest 的 `release` 正式版（>=1.7.10、非 1.13、<26）作为权威集合；fabric（用 `/v2/versions/game`）、forge、neoforge 归一化后都与该集合对照，从而剔除 `1.7.10pre4` 预览版与 neoforge `1.0.3→1.1` 等垃圾版本。
+3. **TinyParser 支持 Tiny v1**：Yarn 部分版本产出 `v1` 头（扁平结构 `CLASS/FIELD/METHOD owner desc <ns0> <ns1> ...`），现可解析；同时修正命名空间选择：可读目标取 `named`（而非 `official`）。
+4. **后台下载 + 全局下载锁**：新增应用级单例 `DownloadManager`（独立 CoroutineScope），下载不再随界面销毁而取消；同一时刻只允许一个下载，再次触发给出提示；进行中所有下载按钮禁用。
+5. **移除独立 mojmap 源**：加载器选项改为 `ALL/Fabric/Forge/NeoForge`（Mojang 官方映射并入 forge）。
+6. **搜索重构**：删除联想菜单（结果直接在结果区实时呈现）；类型只保留 `CLASS/METHOD/FIELD`；版本范围删除“全部版本”，改为“版本 (加载器)”对；`fuzzySearch` 合并 FTS 前缀 + LIKE 子串匹配（输入 `pla` 可命中 play/player）。

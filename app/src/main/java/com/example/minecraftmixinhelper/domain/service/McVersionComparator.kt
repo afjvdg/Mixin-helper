@@ -37,17 +37,22 @@ object McVersionComparator {
     /**
      * 根据 MC 版本与加载器决定映射类型（仅兜底决策，UI 层面可覆盖）：
      * - fabric：始终使用 Yarn（对所有 MC 版本均有稳定发布）
-     * - forge / neoforge：1.18+ 使用 Parchment（参数名 + Javadoc，叠加 Mojmap），
-     *   更早版本仅 Mojmap（Mojang 官方映射）
-     * - 其他（mojang / parchment）：Mojmap
+     * - forge：1.17 之前使用 MCP（Forge 自 1.17 起全面转向 Mojang 官方映射 mojmap，
+     *   并叠加 Parchment 参数名/Javadoc），故 <1.17 → mcp，>=1.17 → parchment
+     * - neoforge：自 1.20.1 起，始终基于 mojmap 并叠加 Parchment
+     * - 其他：Mojmap
      */
     fun decideMappingType(mcVersion: String, loader: String): String {
         return when (loader.lowercase()) {
             "fabric" -> "yarn"
-            "forge", "neoforge" -> if (ge(mcVersion, "1.18")) "parchment" else "mojmap"
+            "forge" -> if (ge(mcVersion, "1.17")) "parchment" else "mcp"
+            "neoforge" -> "parchment"
             else -> "mojmap"
         }
     }
+
+    /** Forge 是否使用 MCP（<1.17）。 */
+    fun isForgeMcp(mcVersion: String): Boolean = !ge(mcVersion, "1.17")
 
     /**
      * 从模组加载器版本号中解析 Minecraft 版本：

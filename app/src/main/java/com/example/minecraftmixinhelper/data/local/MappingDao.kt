@@ -42,4 +42,8 @@ interface MappingDao {
     // 已下载版本列表（搜索页版本选择器数据源）
     @Query("SELECT DISTINCT version FROM mappings WHERE version <> '' ORDER BY version DESC")
     suspend fun getDownloadedVersions(): List<String>
+
+    // 已下载的「版本 + 加载器」对（搜索页版本范围选择，同一 MC 版本不同加载器需区分标注）
+    @Query("SELECT DISTINCT version, loader FROM mappings WHERE version <> '' ORDER BY version DESC, loader ASC")
+    suspend fun getDownloadedVersionLoaders(): List<VersionLoaderRow>
 }

@@ -18,24 +18,24 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.minecraftmixinhelper.data.local.MappingEntity
+import com.example.minecraftmixinhelper.data.local.VersionLoaderRow
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hiltViewModel()) {
     val results by viewModel.searchResults.collectAsState()
-    val suggestions by viewModel.suggestions.collectAsState()
     val recentQueries by viewModel.recentQueries.collectAsState()
-    val downloadedVersions by viewModel.downloadedVersions.collectAsState()
+    val versionLoaders by viewModel.versionLoaders.collectAsState()
     val loading by viewModel.loading.collectAsState()
 
     var query by remember { mutableStateOf("") }
-    var searchType by remember { mutableStateOf("ALL") }
-    var selectedVersion by remember { mutableStateOf("") }
+    var searchType by remember { mutableStateOf("CLASS") }
+    var selectedRow by remember { mutableStateOf<VersionLoaderRow?>(null) }
     var showDetail by remember { mutableStateOf<MappingEntity?>(null) }
 
-    val types = listOf("ALL", "CLASS", "METHOD", "FIELD")
-    val versionOptions = listOf("") + downloadedVersions
+    // 只保留 class / method / field，无 "ALL"
+    val types = listOf("CLASS", "METHOD", "FIELD")
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         // 搜索类型切换
@@ -50,14 +50,14 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
         }
         Spacer(Modifier.height(8.dp))
 
-        // 版本范围选择（全部 / 已下载版本）
+        // 版本范围选择（无“全部版本”，每个条目标注版本 + 加载器）
         var versionExpanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = versionExpanded,
             onExpandedChange = { versionExpanded = !versionExpanded }
         ) {
             OutlinedTextField(
-                value = if (selectedVersion.isEmpty()) "全部版本" else selectedVersion,
+                value = selectedRow?.let { "${it.version} (${it.loader})" } ?: "请选择已下载版本",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("版本范围") },
@@ -68,13 +68,13 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
                 expanded = versionExpanded,
                 onDismissRequest = { versionExpanded = false }
             ) {
-                versionOptions.forEach { v ->
+                versionLoaders.forEach { row ->
                     DropdownMenuItem(
-                        text = { Text(if (v.isEmpty()) "全部版本" else v) },
+                        text = { Text("${row.version} (${row.loader})") },
                         onClick = {
-                            selectedVersion = v
+                            selectedRow = row
                             versionExpanded = false
-                            viewModel.setVersion(v)
+                            viewModel.setVersionLoader(row)
                         }
                     )
                 }
@@ -82,65 +82,24 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
         }
         Spacer(Modifier.height(8.dp))
 
-        // 搜索输入框（禁止换行 + 单行 + 实时建议下拉）
-        Box {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { newValue ->
-                    if (!newValue.contains("\n")) {
-                        query = newValue
-                        viewModel.setQuery(newValue)
-                    }
-                },
-                label = { Text("输入类名 / 方法名 / 字段名实时搜索") },
-                placeholder = { Text("如: Player / getX / field_1") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = { viewModel.commitQuery(query) }
-                )
-            )
-
-            if (query.isNotBlank() && suggestions.isNotEmpty()) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .padding(top = 60.dp)
-                        .heightIn(max = 220.dp),
-                    shape = MaterialTheme.shapes.medium,
-                    tonalElevation = 4.dp,
-                    shadowElevation = 8.dp
-                ) {
-                    LazyColumn {
-                        items(suggestions.take(8)) { s ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        query = s.deobfuscatedName
-                                        viewModel.setQuery(s.deobfuscatedName)
-                                        viewModel.commitQuery(s.deobfuscatedName)
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                            ) {
-                                Text(
-                                    s.deobfuscatedName,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    "${s.type} · ${s.className}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                        }
-                    }
+        // 搜索输入框（禁止换行 + 单行 + 实时搜索，结果直接在下方呈现）
+        OutlinedTextField(
+            value = query,
+            onValueChange = { newValue ->
+                if (!newValue.contains("\n")) {
+                    query = newValue
+                    viewModel.setQuery(newValue)
                 }
-            }
-        }
+            },
+            label = { Text("输入类名 / 方法名 / 字段名实时搜索") },
+            placeholder = { Text("如: Player / getX / field_1") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = { viewModel.commitQuery(query) }
+            )
+        )
         Spacer(Modifier.height(8.dp))
 
         // 最近搜索（输入为空时展示）
@@ -198,7 +157,10 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.outline
                                 )
-                                Text("类型: ${mapping.type}", style = MaterialTheme.typography.labelSmall)
+                                Text(
+                                    "类型: ${mapping.type} · ${mapping.version} (${mapping.loader})",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
                         }
                     }

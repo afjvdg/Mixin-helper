@@ -53,13 +53,21 @@ class McVersionComparatorTest {
         // fabric 始终 Yarn
         assertEquals("yarn", McVersionComparator.decideMappingType("1.20.1", "fabric"))
         assertEquals("yarn", McVersionComparator.decideMappingType("26.2", "fabric"))
-        // forge / neoforge：1.18+ 用 Parchment，更早用 Mojmap
+        // forge：1.17 起用 mojmap+Parchment，更早用 MCP
         assertEquals("parchment", McVersionComparator.decideMappingType("1.20.1", "forge"))
-        assertEquals("parchment", McVersionComparator.decideMappingType("1.18", "neoforge"))
-        assertEquals("mojmap", McVersionComparator.decideMappingType("1.17.1", "forge"))
-        assertEquals("mojmap", McVersionComparator.decideMappingType("1.12.2", "forge"))
+        assertEquals("parchment", McVersionComparator.decideMappingType("1.17", "forge"))
+        assertEquals("parchment", McVersionComparator.decideMappingType("1.17.1", "forge"))
+        assertEquals("mcp", McVersionComparator.decideMappingType("1.16.5", "forge"))
+        assertEquals("mcp", McVersionComparator.decideMappingType("1.12.2", "forge"))
+        // neoforge（自 1.20.1 起）始终 mojmap+Parchment
+        assertEquals("parchment", McVersionComparator.decideMappingType("1.20.1", "neoforge"))
+        assertEquals("parchment", McVersionComparator.decideMappingType("1.21.1", "neoforge"))
         // 其他加载器默认 Mojmap
         assertEquals("mojmap", McVersionComparator.decideMappingType("1.20.1", "mojang"))
         assertEquals("mojmap", McVersionComparator.decideMappingType("1.20.1", "parchment"))
+        // Forge MCP 判定
+        assertTrue(McVersionComparator.isForgeMcp("1.16.5"))
+        assertFalse(McVersionComparator.isForgeMcp("1.17"))
+        assertFalse(McVersionComparator.isForgeMcp("1.20.1"))
     }
 }
