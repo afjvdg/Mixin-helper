@@ -56,11 +56,14 @@ class DownloadManager @Inject constructor(
         // 把字节级进度回调接到 DownloadManager（单例全局锁保证同时只有一个下载）
         downloader.bindProgressListener(object : DownloadProgressListener {
             override fun onProgress(downloaded: Long, total: Long?) {
-                val start = lastTickTime
                 val now = System.currentTimeMillis()
-                val elapsed = (now - start).coerceAtLeast(1)
-                val speed = if (elapsed > 0) downloaded * 1000 / elapsed else 0L
+                val elapsed = (now - lastTickTime).coerceAtLeast(1)
+                // 速度 = 本间隔内「新增」的字节数 / 间隔时间（而非累计字节数 / 间隔时间，
+                // 否则会随下载进度增长而虚高）。
+                val delta = (downloaded - lastDownloaded).coerceAtLeast(0)
+                val speed = delta * 1000 / elapsed
                 lastTickTime = now
+                lastDownloaded = downloaded
                 _progress.value = DownloadProgress(
                     downloaded = downloaded,
                     total = total,
@@ -74,6 +77,7 @@ class DownloadManager @Inject constructor(
     }
 
     private var lastTickTime: Long = System.currentTimeMillis()
+    private var lastDownloaded: Long = 0
 
     /** 从远程刷新版本列表（后台执行）。 */
     fun refreshVersions() {
@@ -98,6 +102,7 @@ class DownloadManager @Inject constructor(
             _activeIds.value = _activeIds.value + entity.id
             _progress.value = DownloadProgress()
             lastTickTime = System.currentTimeMillis()
+            lastDownloaded = 0
             _status.value =
                 DashboardStatus.Loading("正在下载 ${entity.version} (${entity.loader})...")
             try {
