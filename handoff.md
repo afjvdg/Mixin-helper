@@ -12,7 +12,7 @@
 - 功能清单（全部完成）：4 个解析器、多源版本列表、下载编排（Mojmap/Yarn/Parchment + Forge/NeoForge 归一化）、Room v1→v2→v3 迁移、FTS4 搜索、搜索建议下拉 + 最近搜索、Dashboard/Search UI、应用图标（全密度 + 自适应）。
 - CI（`assembleDebug`）曾在 PR #6 上验证通过；`testDebugUnitTest` 步骤**未合入** CI（见 §5）。
 
-## 2. 环境与网络（实测结论，勿再重复试探）
+## 2. 环境与网络（可能因环境而需要改变，以实测为准）
 
 - 沙箱直连外网被墙：curl / urllib 全部失败（HTTP 000 / TLS 被切断）；**无法本地跑 Gradle**（依赖仓库不可达），编译/测试以 GitHub CI 为准。
 - `fetch_page` ✅ 走平台网络，可抓取真实网页 / JSON / GitHub API 与 raw 文件（是获取真实数据的唯一通道；大文件如 10MB client_mappings.txt 会被截断/502，宜找小样本或官方测试资源）。
