@@ -80,7 +80,7 @@ class MojmapParserTest {
     }
 
     @Test
-    fun `解析真实格式字段行（类型 名称 -> 混淆名）`() {
+    fun `解析真实格式字段行（类型 名称至混淆名）`() {
         val parsed = MojmapParser.parse(realStyleMappings)
         val fields = parsed.filter { it.type == "FIELD" }
         assertEquals(3, fields.size)
