@@ -52,10 +52,12 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
                 Text("选择版本并点击下载以缓存映射", color = MaterialTheme.colorScheme.outline)
             is DashboardStatus.Loading -> {
                 Column {
-                    val percent = progress.percent
-                    if (percent != null) {
+                    val dl = progress.downloaded
+                    val total = progress.total
+                    val pct = progress.percent
+                    if (pct != null) {
                         LinearProgressIndicator(
-                            progress = { percent },
+                            progress = { pct },
                             modifier = Modifier.fillMaxWidth()
                         )
                     } else {
@@ -63,10 +65,10 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(s.message, color = MaterialTheme.colorScheme.primary)
-                    if (progress.total != null) {
+                    if (total != null) {
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            "${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)} · ${formatBytes(progress.speed)}/s",
+                            "${formatBytes(dl)} / ${formatBytes(total)} · ${formatBytes(progress.speed)}/s",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.outline
                         )
