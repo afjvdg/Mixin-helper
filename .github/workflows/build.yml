@@ -49,6 +49,16 @@ jobs:
       - name: Build Debug APK
         run: ./gradlew assembleDebug -q
 
+      #上传测试结果
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()   # 即使测试失败也执行上传
+        with:
+          name: test-reports
+          path: app/build/reports/tests/testDebugUnitTest/
+          retention-days: 30
+
+
       # 上传 APK
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
