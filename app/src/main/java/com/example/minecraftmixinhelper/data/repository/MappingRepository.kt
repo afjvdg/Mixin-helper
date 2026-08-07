@@ -8,6 +8,9 @@ import com.example.minecraftmixinhelper.data.remote.FabricApi
 import com.example.minecraftmixinhelper.data.remote.ForgeNeoForgeApi
 import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.remote.MojangApi
+import com.example.minecraftmixinhelper.domain.service.MojmapParser
+import com.example.minecraftmixinhelper.domain.service.ParchmentParser
+import com.example.minecraftmixinhelper.domain.service.TinyParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -25,131 +28,226 @@ class MappingRepository @Inject constructor(
 
     fun getVersions(): Flow<List<VersionEntity>> = versionDao.getAllVersions()
 
+    // ==================== 多源版本列表 ====================
+
     suspend fun fetchAndCacheVersions() = withContext(Dispatchers.IO) {
-        try {
-            val manifest = mojangApi.getVersionManifest()
-            val mojangVersions = manifest.versions
-                .filter { !it.id.startsWith("1.13") } // 排除 1.13 版本
-                .take(50)
-                .map { VersionEntity(it.id, "mojang", "mojmap", false) }
-
-            val fabricVersions = fabricApi.getGameVersions()
-                .filter { !it.version.startsWith("1.13") }
-                .take(30)
-                .map { VersionEntity(it.version, "fabric", "yarn", false) }
-
-            val forgeVersions = listOf(
-                VersionEntity("1.20.1", "forge", "mojmap", false),
-                VersionEntity("1.20.1", "neoforge", "mojmap", false),
-                VersionEntity("1.19.4", "forge", "mojmap", false)
-            )
-
-            val all = (mojangVersions + fabricVersions + forgeVersions)
-                .distinctBy { it.version + it.loader }
-                .sortedByDescending { it.version }
-
-            versionDao.insertAll(all)
-        } catch (e: Exception) {
-            // 网络失败时插入少量默认数据
-            val defaults = listOf(
-                VersionEntity("1.20.1", "fabric", "yarn", false),
-                VersionEntity("1.20.1", "forge", "mojmap", false),
-                VersionEntity("1.19.4", "neoforge", "mojmap", false)
-            )
-            versionDao.insertAll(defaults)
+        val sources = listOf<suspend () -> List<VersionEntity>>(
+            { fetchMojangVersions() },
+            { fetchFabricVersions() },
+            { fetchForgeVersions() },
+            { fetchNeoForgeVersions() },
+            { fetchParchmentVersions() }
+        )
+        val collected = mutableListOf<VersionEntity>()
+        for (src in sources) {
+            try {
+                collected += src()
+            } catch (e: Exception) {
+                // 单源失败不影响其他源
+            }
+        }
+        if (collected.isNotEmpty()) {
+            versionDao.insertAll(collected.distinctBy { it.id })
+        } else {
+            versionDao.insertAll(defaultVersions())
         }
     }
 
-    // 真实下载并解析 Mojang mappings（支持 Parchment 时同时下载）
+    private suspend fun fetchMojangVersions(): List<VersionEntity> {
+        val manifest = mojangApi.getVersionManifest()
+        return manifest.versions
+            .filter { it.type == "release" }
+            .filter { !it.id.startsWith("1.13") }
+            .take(40)
+            .map {
+                VersionEntity(
+                    id = "${it.id}|mojang",
+                    version = it.id,
+                    loader = "mojang",
+                    mappingType = "mojmap",
+                    versionJsonUrl = it.url
+                )
+            }
+    }
+
+    private suspend fun fetchFabricVersions(): List<VersionEntity> {
+        return fabricApi.getYarnVersions()
+            .filter { it.stable }
+            .take(30)
+            .map {
+                VersionEntity(
+                    id = "${it.gameVersion}|fabric",
+                    version = it.gameVersion,
+                    loader = "fabric",
+                    mappingType = "yarn"
+                )
+            }
+    }
+
+    private suspend fun fetchForgeVersions(): List<VersionEntity> {
+        return extractMavenVersions(forgeApi.getForgeMetadata())
+            .take(10)
+            .map {
+                VersionEntity(
+                    id = "${it}|forge",
+                    version = it,
+                    loader = "forge",
+                    mappingType = "mojmap"
+                )
+            }
+    }
+
+    private suspend fun fetchNeoForgeVersions(): List<VersionEntity> {
+        return extractMavenVersions(forgeApi.getNeoForgeMetadata())
+            .take(10)
+            .map {
+                VersionEntity(
+                    id = "${it}|neoforge",
+                    version = it,
+                    loader = "neoforge",
+                    mappingType = "mojmap"
+                )
+            }
+    }
+
+    private suspend fun fetchParchmentVersions(): List<VersionEntity> {
+        return extractMavenVersions(forgeApi.getParchmentMetadata())
+            .take(20)
+            .map {
+                VersionEntity(
+                    id = "${it}|parchment",
+                    version = it,
+                    loader = "parchment",
+                    mappingType = "parchment"
+                )
+            }
+    }
+
+    private fun extractMavenVersions(xml: String): List<String> =
+        MAVEN_VERSION_RE.findAll(xml).map { it.groupValues[1] }.toList()
+
+    private fun defaultVersions(): List<VersionEntity> = listOf(
+        VersionEntity("1.20.1|fabric", "1.20.1", "fabric", "yarn"),
+        VersionEntity("1.20.1|forge", "1.20.1", "forge", "mojmap"),
+        VersionEntity("1.19.4|neoforge", "1.19.4", "neoforge", "mojmap")
+    )
+
+    // ==================== 下载并解析映射 ====================
+
     suspend fun downloadAndParseMappings(
-        version: String, 
-        versionJsonUrl: String, 
-        mappingType: String
+        version: String,
+        versionJsonUrl: String,
+        mappingType: String,
+        loader: String
     ) = withContext(Dispatchers.IO) {
-        try {
-            // 总是先下载 Mojmap
-            val rawMojmap = downloader.downloadMojangMappings(versionJsonUrl)
-            val mojmapEntities = parseMojmap(rawMojmap, version)
-            mappingDao.insertAll(mojmapEntities)
-
-            // 如果是 Parchment，再额外处理（目前仅标记，后续可扩展）
-            if (mappingType == "parchment") {
-                // TODO: 下载 Parchment 参数映射（可扩展）
+        val parsed: List<MojmapParser.ParsedMapping> = when (mappingType) {
+            "yarn" -> {
+                val rawTiny = downloader.downloadYarnMappings(version)
+                TinyParser.parse(rawTiny)
             }
-        } catch (e: Exception) {
-            mappingDao.insertAll(listOf(
-                MappingEntity(className = "net.minecraft.world.entity.player.Player", obfuscatedName = "gfj", deobfuscatedName = "Player", type = "CLASS")
-            ))
+            "parchment" -> {
+                val rawJson = downloader.downloadParchmentJson(version)
+                val enrich = ParchmentParser.parse(rawJson)
+                val rawMojmap = downloader.downloadMojangMappings(versionJsonUrl)
+                applyParchment(MojmapParser.parse(rawMojmap), enrich)
+            }
+            else -> { // mojmap
+                val rawMojmap = downloader.downloadMojangMappings(versionJsonUrl)
+                MojmapParser.parse(rawMojmap)
+            }
+        }
+
+        val entities = parsed.map { pm ->
+            MappingEntity(
+                className = pm.className,
+                obfuscatedName = pm.obfuscatedName,
+                deobfuscatedName = pm.deobfuscatedName,
+                type = pm.type,
+                descriptor = pm.descriptor,
+                params = pm.params.joinToString(","),
+                returnType = pm.returnType,
+                paramNames = pm.paramNames,
+                javadoc = pm.javadoc,
+                version = version,
+                loader = loader
+            )
+        }
+        mappingDao.insertAll(entities)
+        versionDao.markCached(version, loader)
+    }
+
+    private fun applyParchment(
+        mojmap: List<MojmapParser.ParsedMapping>,
+        enrich: ParchmentParser.ParchmentData
+    ): List<MojmapParser.ParsedMapping> {
+        return mojmap.map { pm ->
+            when (pm.type) {
+                "METHOD" -> {
+                    val key = "${pm.className}|${pm.deobfuscatedName}|${pm.descriptor}"
+                    val info = enrich.byMethod[key]
+                    if (info != null) pm.copy(paramNames = info.paramNames, javadoc = info.javadoc) else pm
+                }
+                "CLASS" -> {
+                    val jd = enrich.classJavadoc[pm.className]
+                    if (jd != null) pm.copy(javadoc = jd) else pm
+                }
+                else -> pm
+            }
         }
     }
 
-    // 解析 Mojmap (ProGuard 格式)
-    private fun parseMojmap(raw: String, version: String): List<MappingEntity> {
-        val lines = raw.lines()
-        val entities = mutableListOf<MappingEntity>()
+    // ==================== 搜索（FTS4 前缀 + LIKE 回退） ====================
 
-        for (line in lines) {
-            when {
-                line.startsWith("#") || line.isBlank() -> continue
-                line.contains(" -> ") && !line.contains("(") -> {
-                    // 类映射
-                    val parts = line.split(" -> ")
-                    if (parts.size == 2) {
-                        entities.add(
-                            MappingEntity(
-                                className = parts[0].trim(),
-                                obfuscatedName = parts[1].trim(),
-                                deobfuscatedName = parts[0].trim(),
-                                type = "CLASS"
-                            )
-                        )
-                    }
-                }
-                line.contains("(") && line.contains(")") -> {
-                    // 方法映射（简化处理）
-                    // 实际项目中需要更复杂的正则解析
-                }
-            }
-        }
-        return entities.take(500) // 限制数量防止 OOM
-    }
-
-    fun searchMappings(query: String) = mappingDao.searchMappings(query)
-
-    // 模糊搜索（支持按类型过滤）
-    suspend fun fuzzySearch(query: String, type: String = "CLASS"): List<MappingEntity> {
+    suspend fun fuzzySearch(query: String, type: String = "ALL", version: String = ""): List<MappingEntity> {
+        if (query.isBlank()) return emptyList()
         return try {
-            if (query.isBlank()) return emptyList()
-            
-            val results = mappingDao.fuzzySearchFts(query)
-            
-            // 按类型过滤
-            results.filter { it.type.equals(type, ignoreCase = true) }
+            val results = mappingDao.fuzzySearchFts(toFtsMatchQuery(query))
+            filterResults(results, type, version)
         } catch (e: Exception) {
-            // 失败时回退
-            mappingDao.searchMappings(query).first().filter { 
-                it.type.equals(type, ignoreCase = true) 
-            }
+            filterResults(mappingDao.searchMappings(query).first(), type, version)
         }
     }
 
-    suspend fun insertMappings(mappings: List<MappingEntity>) {
-        mappingDao.insertAll(mappings)
+    private fun filterResults(
+        results: List<MappingEntity>,
+        type: String,
+        version: String
+    ): List<MappingEntity> {
+        return results.filter { m ->
+            (type == "ALL" || m.type.equals(type, ignoreCase = true)) &&
+                (version.isBlank() || m.version == version)
+        }
     }
 
-    // ==================== 映射类型自动决策逻辑 ====================
-    fun decideMappingType(mcVersion: String, loader: String): String {
-        // 旧版本使用 MCP
-        if (mcVersion <= "1.12.2") return "mcp"
+    // FTS4 前缀匹配：清洗输入 -> 逐词用双引号包裹 + 前缀 *，多词空格连接
+    private fun toFtsMatchQuery(raw: String): String {
+        return raw.split(Regex("""\s+"""))
+            .filter { it.isNotEmpty() }
+            .joinToString(" ") { word ->
+                val cleaned = word.replace(Regex("""["*\\-]"""), "")
+                if (cleaned.isEmpty()) "" else "\"$cleaned\"*"
+            }
+    }
 
+    suspend fun getDownloadedVersions(): List<String> = mappingDao.getDownloadedVersions()
+
+    // ==================== 映射类型自动决策（数字元组比较，仅兜底） ====================
+
+    fun decideMappingType(mcVersion: String, loader: String): String {
+        val tuple = versionTuple(mcVersion)
         return when (loader.lowercase()) {
-            "fabric" -> {
-                if (mcVersion >= "1.21.11") "mojmap" else "yarn"
-            }
-            "forge", "neoforge" -> {
-                if (mcVersion >= "1.18") "parchment" else "mojmap"
-            }
+            "fabric" -> if (tuple >= versionTuple("1.21.11")) "mojmap" else "yarn"
+            "forge", "neoforge" -> if (tuple >= versionTuple("1.18")) "parchment" else "mojmap"
             else -> "mojmap"
         }
+    }
+
+    private fun versionTuple(v: String): List<Int> =
+        v.split(Regex("""[.\-]""")).map { part ->
+            part.filter { it.isDigit() }.toIntOrNull() ?: 0
+        }
+
+    private companion object {
+        val MAVEN_VERSION_RE = Regex("""<version>(.+?)</version>""")
     }
 }

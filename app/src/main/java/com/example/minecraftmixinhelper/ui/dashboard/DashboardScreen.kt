@@ -1,8 +1,11 @@
 package com.example.minecraftmixinhelper.ui.dashboard
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -14,111 +17,87 @@ fun DashboardScreen(navController: NavController, viewModel: DashboardViewModel 
     val versions by viewModel.versions.collectAsState()
     val status by viewModel.status.collectAsState()
 
-    var selectedVersion by remember { mutableStateOf("") }
-    var selectedLoader by remember { mutableStateOf("Fabric") }
-    val loaders = listOf("Fabric", "Forge", "NeoForge")
+    val loaders = listOf("ALL", "Mojang", "Fabric", "Forge", "NeoForge", "Parchment")
+    var selectedLoader by remember { mutableStateOf("ALL") }
 
-    // 版本下拉菜单状态
-    var versionExpanded by remember { mutableStateOf(false) }
-    var loaderExpanded by remember { mutableStateOf(false) }
+    val filtered = versions.filter {
+        selectedLoader == "ALL" || it.loader.equals(selectedLoader, ignoreCase = true)
+    }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Minecraft Mixin Helper", style = MaterialTheme.typography.headlineMedium)
-
-        // Minecraft 版本下拉
-        ExposedDropdownMenuBox(
-            expanded = versionExpanded,
-            onExpandedChange = { versionExpanded = !versionExpanded }
-        ) {
-            OutlinedTextField(
-                value = selectedVersion,
-                onValueChange = {},
-                label = { Text("Minecraft 版本") },
-                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                readOnly = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = versionExpanded) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Minecraft Mixin Helper",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.weight(1f)
             )
-            ExposedDropdownMenu(
-                expanded = versionExpanded,
-                onDismissRequest = { versionExpanded = false }
-            ) {
-                versions.forEach { version ->
-                    DropdownMenuItem(
-                        text = { Text(version.version) },
-                        onClick = {
-                            selectedVersion = version.version
-                            versionExpanded = false
+            Button(onClick = { viewModel.refreshVersions() }) { Text("刷新") }
+        }
+
+        // Loader 过滤
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            loaders.forEach { loader ->
+                FilterChip(
+                    selected = selectedLoader == loader,
+                    onClick = { selectedLoader = loader },
+                    label = { Text(loader) }
+                )
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(filtered) { v ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(v.version, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "${v.loader} · ${v.mappingType}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                            if (v.isCached) {
+                                Text(
+                                    "✓ 已缓存",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
                         }
-                    )
-                }
-            }
-        }
-
-        // Mod Loader 下拉
-        ExposedDropdownMenuBox(
-            expanded = loaderExpanded,
-            onExpandedChange = { loaderExpanded = !loaderExpanded }
-        ) {
-            OutlinedTextField(
-                value = selectedLoader,
-                onValueChange = {},
-                label = { Text("Mod Loader") },
-                modifier = Modifier.fillMaxWidth().menuAnchor(),
-                readOnly = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = loaderExpanded) }
-            )
-            ExposedDropdownMenu(
-                expanded = loaderExpanded,
-                onDismissRequest = { loaderExpanded = false }
-            ) {
-                loaders.forEach { loader ->
-                    DropdownMenuItem(
-                        text = { Text(loader) },
-                        onClick = {
-                            selectedLoader = loader
-                            loaderExpanded = false
+                        Button(onClick = { viewModel.downloadMappings(v) }) {
+                            Text(if (v.isCached) "重新下载" else "下载")
                         }
-                    )
+                    }
                 }
             }
         }
 
-        Button(
-            onClick = {
-                if (selectedVersion.isNotBlank()) {
-                    viewModel.downloadMappingsForVersion(selectedVersion, selectedLoader)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = selectedVersion.isNotBlank()
-        ) {
-            Text("获取版本并下载映射")
-        }
-
-        // 状态反馈（含进度提示和详细错误）
-        when (status) {
-            is DashboardStatus.Idle -> {
-                Text("请选择版本和加载器后点击按钮", color = MaterialTheme.colorScheme.outline)
-            }
+        // 状态卡片（成功/失败持久保留，不会被进度条冲掉）
+        when (val s = status) {
+            is DashboardStatus.Idle ->
+                Text("选择版本并点击下载以缓存映射", color = MaterialTheme.colorScheme.outline)
             is DashboardStatus.Loading -> {
-                val message = (status as DashboardStatus.Loading).message
                 Column {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Text(message, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    Text(s.message, color = MaterialTheme.colorScheme.primary)
                 }
             }
             is DashboardStatus.Success -> {
-                Text("✓ 映射下载成功，已缓存到本地！", color = MaterialTheme.colorScheme.primary)
+                Text(s.message, color = MaterialTheme.colorScheme.primary)
             }
             is DashboardStatus.Error -> {
-                val errorMsg = (status as DashboardStatus.Error).message
-                Text("✗ $errorMsg", color = MaterialTheme.colorScheme.error)
+                Column {
+                    Text("✗ ${s.message}", color = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(4.dp))
+                    Button(onClick = { viewModel.refreshVersions() }) { Text("重试") }
+                }
             }
         }
     }
