@@ -41,7 +41,8 @@
 ### 3.4 Parchment 数据源（真实世界已变化，旧 URL 已死）
 - maven 后端迁移（maven.parchmentmc.org → ldtteam.jfrog.io），**坐标改为** `org.parchmentmc.data:parchment-<mc>:<YYYY.MM.DD>@zip`（zip 内条目为 `parchment.json`）；旧坐标 `parchment:<ver>:tiny@zip` 作回退
 - 版本列表用 GitHub 分支 API（`ParchmentMC/Parchment` 的 `versions/X.Y.x` 分支）；补丁版本（如 1.21 → 1.21.11）从分支 `build.gradle` 的 `compass { version = '...' }` 解析
-- zip 文件名留了两个候选（`parchment-<mc>-<date>.zip` / `officialExport-<date>.zip`），未实网确认
+- **zip 文件名已实网确认**（2026-08-07 经 ldtteam JFrog 目录列表核实 1.21.1 / 1.21.8）：**`parchment-<mc>-<date>.zip`**（如 `parchment-1.21.1-2024.11.17.zip`、`parchment-1.21.8-2025.07.20.zip`）；`officialExport-<date>.zip` 为历史遗留命名，**真实仓库中不存在**，已从代码移除
+- **仓库 base 已实网确认并修正**：真实仓库在 `https://ldtteam.jfrog.io/artifactory/parchmentmc-public/`（注意是 `parchmentmc-public` 而非 `parchmentmc`）；`maven.parchmentmc.org` 现重定向到该 JFrog 仓库。`MappingDownloader` 新坐标已改为优先请求 JFrog、`maven.parchmentmc.org` 兜底
 
 ### 3.5 Forge / NeoForge 版本归一化
 - forge：`1.20.1-47.2.0` → `1.20.1`；neoforge：`21.1.78` → `1.21.1`、`26.2.0.49-beta` → `26.2`（MC 26+ 直接以 MC 版本为前缀）
@@ -70,7 +71,7 @@
 
 - Room v1→v2→v3 迁移从未在真机运行
 - Mojmap / Yarn / Parchment 真实下载 + 解析的端到端从未验证（解析器已有真实格式样本单测覆盖）
-- Parchment 新坐标 zip 文件名候选未实网确认
+- ~~Parchment 新坐标 zip 文件名候选~~ 已实网确认（`parchment-<mc>-<date>.zip`，见 §3.4），代码已同步修正 base URL 与文件名
 
 ## 7. 下一步（给下一个 agent）
 

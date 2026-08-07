@@ -41,36 +41,43 @@ class MappingDownloader(private val client: HttpClient) {
      * `org.parchmentmc.data:parchment-<mc>:<YYYY.MM.DD>@zip`（zip 内含 `parchment.json`）
      * 旧坐标 `org.parchmentmc.data:parchment:<ver>:tiny@zip` 作为回退。
      *
+     * 后端仓库已迁移：`maven.parchmentmc.org` 现重定向到 ldtteam 的 JFrog 仓库
+     * `https://ldtteam.jfrog.io/artifactory/parchmentmc-public/`。故新坐标优先请求
+     * JFrog 真实仓库，`maven.parchmentmc.org` 保留作兜底。
+     *
+     * zip 文件名已实网确认：`parchment-<mc>-<date>.zip`
+     * （如 `parchment-1.21.1-2024.11.17.zip`、`parchment-1.21.8-2025.07.20.zip`）。
+     *
      * [mcVersion] 可能是次版本（如 `1.21`，来自版本列表的分支名），此时先从
      * Parchment 数据仓库的 `build.gradle` 解析 compass 补丁版本（如 `1.21.11`）。
      */
     suspend fun downloadParchmentJson(mcVersion: String): String {
         val patch = resolveParchmentPatch(mcVersion)
 
-        // 新坐标：先尝试（zip 文件名按 Maven 约定，另留一个候选名兜底）
-        try {
-            val metadata = client.get(
-                "https://maven.parchmentmc.org/org/parchmentmc/data/parchment-$patch/maven-metadata.xml"
-            ).bodyAsText()
-            val export = latestReleaseVersion(metadata)
-            if (export != null) {
-                val base = "https://maven.parchmentmc.org/org/parchmentmc/data/parchment-$patch/$export/"
-                val candidates = listOf(
-                    "parchment-$patch-$export.zip",
-                    "officialExport-$export.zip"
-                )
-                for (file in candidates) {
-                    try {
-                        val bytes = client.get(base + file).body<ByteArray>()
-                        val parsed = extractEntry(bytes, "parchment.json")
-                        if (parsed != null) return parsed
-                    } catch (e: Exception) {
-                        // 尝试下一个候选文件名
-                    }
+        // 新坐标：优先 JFrog 真实仓库，`maven.parchmentmc.org` 兜底
+        // （该域名会重定向到同一 JFrog 仓库，保留可兼容旧网络环境）。
+        val newCoordinateHosts = listOf(
+            "https://ldtteam.jfrog.io/artifactory/parchmentmc-public",
+            "https://maven.parchmentmc.org"
+        )
+        for (repo in newCoordinateHosts) {
+            try {
+                val metadata = client.get(
+                    "$repo/org/parchmentmc/data/parchment-$patch/maven-metadata.xml"
+                ).bodyAsText()
+                val export = latestReleaseVersion(metadata)
+                if (export != null) {
+                    // 真实仓库中的 zip 文件名：`parchment-<mc>-<date>.zip`
+                    // （officialExport-<date>.zip 为历史遗留命名，真实仓库中不存在，已移除）
+                    val file = "parchment-$patch-$export.zip"
+                    val bytes = client.get("$repo/org/parchmentmc/data/parchment-$patch/$export/$file")
+                        .body<ByteArray>()
+                    val parsed = extractEntry(bytes, "parchment.json")
+                    if (parsed != null) return parsed
                 }
+            } catch (e: Exception) {
+                // 尝试下一个仓库
             }
-        } catch (e: Exception) {
-            // 继续尝试旧坐标
         }
 
         // 旧坐标回退：org.parchmentmc.data:parchment:{ver}:tiny@zip
