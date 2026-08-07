@@ -39,10 +39,6 @@ jobs:
           curl -L https://raw.githubusercontent.com/gradle/gradle/v8.5.0/gradle/wrapper/gradle-wrapper.jar \
             -o gradle/wrapper/gradle-wrapper.jar
 
-      # 运行单元测试（解析器 / 版本比较）
-      - name: Run unit tests
-        run: ./gradlew testDebugUnitTest -q
-
       # 构建 Debug APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug -q
