@@ -236,10 +236,21 @@ class MappingRepository @Inject constructor(
     fun decideMappingType(mcVersion: String, loader: String): String {
         val tuple = versionTuple(mcVersion)
         return when (loader.lowercase()) {
-            "fabric" -> if (tuple >= versionTuple("1.21.11")) "mojmap" else "yarn"
-            "forge", "neoforge" -> if (tuple >= versionTuple("1.18")) "parchment" else "mojmap"
+            "fabric" -> if (tupleGe(tuple, versionTuple("1.21.11"))) "mojmap" else "yarn"
+            "forge", "neoforge" -> if (tupleGe(tuple, versionTuple("1.18"))) "parchment" else "mojmap"
             else -> "mojmap"
         }
+    }
+
+    // 版本号数字元组按位比较（a >= b 返回 true）
+    private fun tupleGe(a: List<Int>, b: List<Int>): Boolean {
+        val n = maxOf(a.size, b.size)
+        for (i in 0 until n) {
+            val x = a.getOrElse(i) { 0 }
+            val y = b.getOrElse(i) { 0 }
+            if (x != y) return x > y
+        }
+        return true
     }
 
     private fun versionTuple(v: String): List<Int> =
