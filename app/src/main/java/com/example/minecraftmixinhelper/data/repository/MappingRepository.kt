@@ -16,11 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 
 class MappingRepository @Inject constructor(
@@ -38,11 +33,10 @@ class MappingRepository @Inject constructor(
 
     suspend fun fetchAndCacheVersions() = withContext(Dispatchers.IO) {
         val sources = listOf<suspend () -> List<VersionEntity>>(
-            { fetchMojangVersions() },
+            { fetchMojmapVersions() },
             { fetchFabricVersions() },
             { fetchForgeVersions() },
-            { fetchNeoForgeVersions() },
-            { fetchParchmentVersions() }
+            { fetchNeoForgeVersions() }
         )
         val collected = mutableListOf<VersionEntity>()
         for (src in sources) {
@@ -59,17 +53,21 @@ class MappingRepository @Inject constructor(
         }
     }
 
-    private suspend fun fetchMojangVersions(): List<VersionEntity> {
+    /**
+     * Mojang 官方映射（mojmap）源。
+     * 过滤规则：只删去 1.13.x 系列（Mojang 未提供该系列官方映射）与 26.x 及以上
+     * （MC 26+ 不再混淆，无需映射）。其余（含 1.12.2 及更早）全部保留。
+     */
+    private suspend fun fetchMojmapVersions(): List<VersionEntity> {
         val manifest = mojangApi.getVersionManifest()
         return manifest.versions
             .filter { it.type == "release" }
-            .filter { !it.id.startsWith("1.13") }
-            .take(40)
+            .filter { isSupportedMcVersion(it.id) }
             .map {
                 VersionEntity(
-                    id = "${it.id}|mojang",
+                    id = "${it.id}|mojmap",
                     version = it.id,
-                    loader = "mojang",
+                    loader = "mojmap",
                     mappingType = "mojmap",
                     versionJsonUrl = it.url
                 )
@@ -79,7 +77,7 @@ class MappingRepository @Inject constructor(
     private suspend fun fetchFabricVersions(): List<VersionEntity> {
         return fabricApi.getYarnVersions()
             .filter { it.stable }
-            .take(30)
+            .filter { isSupportedMcVersion(it.gameVersion) }
             .map {
                 VersionEntity(
                     id = "${it.gameVersion}|fabric",
@@ -97,8 +95,9 @@ class MappingRepository @Inject constructor(
     private suspend fun fetchForgeVersions(): List<VersionEntity> {
         return extractMavenVersions(forgeApi.getForgeMetadata())
             .mapNotNull { McVersionComparator.mcVersionOf("forge", it) }
+            .filter { isSupportedMcVersion(it) }
             .distinct()
-            .take(10)
+            .sortedWith { a, b -> McVersionComparator.compare(b, a) }
             .map {
                 VersionEntity(
                     id = "$it|forge",
@@ -116,8 +115,9 @@ class MappingRepository @Inject constructor(
     private suspend fun fetchNeoForgeVersions(): List<VersionEntity> {
         return extractMavenVersions(forgeApi.getNeoForgeMetadata())
             .mapNotNull { McVersionComparator.mcVersionOf("neoforge", it) }
+            .filter { isSupportedMcVersion(it) }
             .distinct()
-            .take(10)
+            .sortedWith { a, b -> McVersionComparator.compare(b, a) }
             .map {
                 VersionEntity(
                     id = "$it|neoforge",
@@ -129,30 +129,11 @@ class MappingRepository @Inject constructor(
     }
 
     /**
-     * Parchment 版本列表：来自 Parchment 数据仓库的分支（versions/X.Y.x），
-     * 下载时再解析具体补丁版本（见 [MappingDownloader.downloadParchmentJson]）。
+     * 版本支持过滤：只删去 1.13.x 系列（`1.13` / `1.13.1` / `1.13.2`）与 26.x 及以上。
      */
-    private suspend fun fetchParchmentVersions(): List<VersionEntity> {
-        val raw = forgeApi.getParchmentBranches()
-        val branches = try {
-            kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-                .parseToJsonElement(raw).jsonArray
-                .mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull }
-        } catch (e: Exception) {
-            emptyList()
-        }
-        return branches
-            .filter { it.startsWith("versions/") && it.endsWith(".x") }
-            .map { it.removePrefix("versions/").removeSuffix(".x") } // "1.21"
-            .take(20)
-            .map {
-                VersionEntity(
-                    id = "$it|parchment",
-                    version = it,
-                    loader = "parchment",
-                    mappingType = "parchment"
-                )
-            }
+    private fun isSupportedMcVersion(v: String): Boolean {
+        if (v.startsWith("1.13")) return false
+        return McVersionComparator.compare(v, "26") < 0
     }
 
     private fun extractMavenVersions(xml: String): List<String> =
@@ -220,7 +201,7 @@ class MappingRepository @Inject constructor(
 
     /**
      * 解析 Mojang 官方映射的 version.json URL：
-     * - Mojang / Parchment 源在版本列表阶段已保存真实 URL，直接使用；
+     * - Mojmap 源在版本列表阶段已保存真实 URL，直接使用；
      * - Forge / NeoForge 源没有该 URL，按 MC 版本查一次 manifest 得到。
      */
     private suspend fun resolveMojangVersionJsonUrl(

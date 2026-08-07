@@ -93,3 +93,17 @@
 图标 PNG 本身经验证均为标准 8-bit RGBA、尺寸合规、内容正常，**非图标图片损坏**；问题在资源放置位置与主题依赖。
 
 > 若换装后仍失败，需补充真机报错文案（如 "There was a problem parsing the package" / "App not installed" / logcat）与目标 SDK、签名信息进一步定位。
+
+## 9. 版本列表 / 下载失败 / UI 修复记录（2026-08-07）
+
+现象（真机复现）：
+- 下载报 `Serializer for class 'VersionManifest' is not found`、`缺少 version.json URL`
+- 版本列表不全（mojmap / fabric 空白，forge / neoforge 不全）
+- 加载器筛选框被挤压、提示/进度被版本列表遮住、下载按钮可重复点击
+
+已修复：
+1. **kotlinx.serialization 编译器插件缺失**（致命根因）：`@Serializable` 类（`VersionManifest` / `FabricGameVersion` / `YarnVersion` 等）因未应用 `org.jetbrains.kotlin.plugin.serialization` 而**运行时无序列化器** → `body()` 反序列化抛 "Serializer not found"，导致 mojang / fabric 版本源整源空白。已：`gradle/libs.versions.toml` 加 `jetbrains-kotlin-serialization` 插件（version.ref=kotlin）与 `kotlinx-serialization-json:1.6.3`；`app/build.gradle.kts` 应用插件并加依赖。
+2. **移除独立 Parchment 源**：Parchment 不再单独列（随 forge/neoforge 一起下载），删除 `fetchParchmentVersions` / `ForgeNeoForgeApi.getParchmentBranches`。这也消除了独立 Parchment 源 `versionJsonUrl` 为空导致的 `缺少 version.json URL` 报错。
+3. **loader 改名 mojang→mojmap**：`fetchMojangVersions`→`fetchMojmapVersions`，loader="mojmap"。
+4. **版本过滤规则**：`isSupportedMcVersion` 只删 `1.13.x` 与 `>=26`（`McVersionComparator.compare(v,"26")<0`），其余全保留；forge/neoforge 不再 `take(10)` 截断，改为归一化 MC 版本后 `distinct()` + 版本降序排序。
+5. **UI**：加载器选项改为 `ALL/Mojmap/Fabric/Forge/NeoForge`，筛选行改 `horizontalScroll`（横向滑动，不再被挤压/垂直拉伸）；状态提示/进度条移到版本列表**上方**（不被遮住）；下载按钮用 `downloadingIds` 集合禁用防重复点击，已缓存条目不显示按钮。

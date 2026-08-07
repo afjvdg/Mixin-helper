@@ -29,6 +29,10 @@ class DashboardViewModel @Inject constructor(
     private val _status = MutableStateFlow<DashboardStatus>(DashboardStatus.Idle)
     val status: StateFlow<DashboardStatus> = _status.asStateFlow()
 
+    // 正在下载的版本 id 集合（用于禁用对应下载按钮，避免重复点击）
+    private val _downloadingIds = MutableStateFlow<Set<String>>(emptySet())
+    val downloadingIds: StateFlow<Set<String>> = _downloadingIds.asStateFlow()
+
     init {
         loadVersionsIfNeeded()
     }
@@ -55,7 +59,10 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun downloadMappings(entity: VersionEntity) {
+        // 防止同一版本重复点击触发多次下载
+        if (entity.id in _downloadingIds.value) return
         viewModelScope.launch {
+            _downloadingIds.value = _downloadingIds.value + entity.id
             _status.value =
                 DashboardStatus.Loading("正在下载 ${entity.version} (${entity.loader})...")
             try {
@@ -74,6 +81,8 @@ class DashboardViewModel @Inject constructor(
                 )
             } catch (e: Exception) {
                 _status.value = DashboardStatus.Error("下载失败: ${e.message}")
+            } finally {
+                _downloadingIds.value = _downloadingIds.value - entity.id
             }
         }
     }
