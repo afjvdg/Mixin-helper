@@ -4,39 +4,19 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.ByteArrayInputStream
 import java.util.zip.ZipInputStream
 
-@Serializable
-private data class VersionJson(
-    val downloads: Downloads? = null
-)
-
-@Serializable
-private data class Downloads(
-    val client_mappings: MappingDownload? = null
-)
-
-@Serializable
-private data class MappingDownload(val url: String)
-
 class MappingDownloader(private val client: HttpClient) {
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     // 下载 Mojang client_mappings（26.x 起已不再附带，会明确报错）
     suspend fun downloadMojangMappings(versionJsonUrl: String): String {
         val versionJson: String = client.get(versionJsonUrl).body()
-        val parsed = json.parseToJsonElement(versionJson).jsonObject
-        val mappingsUrl = parsed["downloads"]?.jsonObject
-            ?.get("client_mappings")?.jsonObject
-            ?.get("url")?.jsonPrimitive?.content
+        val mappingsUrl = extractClientMappingsUrl(versionJson)
         if (mappingsUrl == null) {
-            throw Exception("该版本（26.x+）的 version.json 不再附带 client_mappings（Mojang 已停止发布），请改用 Fabric / Yarn 映射")
+            throw Exception("该版本的 version.json 未附带 client_mappings（Mojang 未发布官方映射），请改用 Fabric / Yarn 映射")
         }
         return client.get(mappingsUrl).bodyAsText()
     }
@@ -53,17 +33,109 @@ class MappingDownloader(private val client: HttpClient) {
             ?: throw Exception("Yarn jar 中未找到 mappings/mappings.tiny")
     }
 
-    // 下载 Parchment 参数映射：查版本 -> 下载 zip -> 解压 parchment.json
-    suspend fun downloadParchmentJson(version: String): String {
-        val metadata: String = client.get("https://maven.parchmentmc.org/org/parchmentmc/data/parchment/maven-metadata.xml").body()
+    /**
+     * 下载 Parchment 参数映射（parchment.json）并解压。
+     *
+     * Parchment 官方自 2023 年起改用按 MC 版本分 artifact 的坐标（见
+     * https://parchmentmc.org/docs/maven.html）：
+     * `org.parchmentmc.data:parchment-<mc>:<YYYY.MM.DD>@zip`（zip 内含 `parchment.json`）
+     * 旧坐标 `org.parchmentmc.data:parchment:<ver>:tiny@zip` 作为回退。
+     *
+     * [mcVersion] 可能是次版本（如 `1.21`，来自版本列表的分支名），此时先从
+     * Parchment 数据仓库的 `build.gradle` 解析 compass 补丁版本（如 `1.21.11`）。
+     */
+    suspend fun downloadParchmentJson(mcVersion: String): String {
+        val patch = resolveParchmentPatch(mcVersion)
+
+        // 新坐标：先尝试（zip 文件名按 Maven 约定，另留一个候选名兜底）
+        try {
+            val metadata = client.get(
+                "https://maven.parchmentmc.org/org/parchmentmc/data/parchment-$patch/maven-metadata.xml"
+            ).bodyAsText()
+            val export = latestReleaseVersion(metadata)
+            if (export != null) {
+                val base = "https://maven.parchmentmc.org/org/parchmentmc/data/parchment-$patch/$export/"
+                val candidates = listOf(
+                    "parchment-$patch-$export.zip",
+                    "officialExport-$export.zip"
+                )
+                for (file in candidates) {
+                    try {
+                        val bytes = client.get(base + file).body<ByteArray>()
+                        val parsed = extractEntry(bytes, "parchment.json")
+                        if (parsed != null) return parsed
+                    } catch (e: Exception) {
+                        // 尝试下一个候选文件名
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // 继续尝试旧坐标
+        }
+
+        // 旧坐标回退：org.parchmentmc.data:parchment:{ver}:tiny@zip
+        try {
+            val metadata = client.get(
+                "https://maven.parchmentmc.org/org/parchmentmc/data/parchment/maven-metadata.xml"
+            ).bodyAsText()
+            val target = legacyVersionFor(metadata, patch)
+            if (target != null) {
+                val zipUrl = "https://maven.parchmentmc.org/org/parchmentmc/data/parchment/" +
+                    "$target/parchment-$target-tiny.zip"
+                val bytes = client.get(zipUrl).body<ByteArray>()
+                val parsed = extractEntry(bytes, "parchment.json")
+                if (parsed != null) return parsed
+            }
+        } catch (e: Exception) {
+            // 两个坐标都失败，抛明确错误
+        }
+        throw Exception("parchmentmc 未发布 $mcVersion 的数据（新坐标 parchment-$patch 与旧坐标均未找到）")
+    }
+
+    /**
+     * 次版本（`1.21`）-> 补丁版本（`1.21.11`）：读取 Parchment 数据仓库
+     * `versions/X.Y.x` 分支的 build.gradle 中的 `compass { version = '...' }`。
+     * 已是补丁版本则原样返回。
+     */
+    private suspend fun resolveParchmentPatch(mcVersion: String): String {
+        if (mcVersion.split('.').size >= 3) return mcVersion
+        val minor = mcVersion.substringBefore('-')
+        if (!minor.matches(Regex("""^\d+\.\d+$"""))) return mcVersion
+        val buildGradle = try {
+            client.get(
+                "https://raw.githubusercontent.com/ParchmentMC/Parchment/versions/$minor.x/build.gradle"
+            ).bodyAsText()
+        } catch (e: Exception) {
+            return mcVersion
+        }
+        return COMPASS_VERSION_RE.find(buildGradle)?.groupValues?.get(1) ?: mcVersion
+    }
+
+    /** 取 maven-metadata 中最新非 SNAPSHOT 的发布版本（日期版本字典序即时间序）。 */
+    private fun latestReleaseVersion(metadata: String): String? =
+        PARCHMENT_VERSION_RE.findAll(metadata)
+            .map { it.groupValues[1] }
+            .filter { !it.contains("SNAPSHOT", ignoreCase = true) }
+            .sortedDescending()
+            .firstOrNull()
+
+    /** 旧坐标：优先精确匹配 MC 版本，其次 `MC版本-` 前缀（如 1.20.1-2023.09.09）。 */
+    private fun legacyVersionFor(metadata: String, mcVersion: String): String? {
         val versions = PARCHMENT_VERSION_RE.findAll(metadata).map { it.groupValues[1] }.toList()
-        val target = versions.firstOrNull { it == version }
-            ?: versions.firstOrNull { it.startsWith("$version-") || it.startsWith(version) }
-            ?: throw Exception("parchmentmc 未发布版本 $version 的数据")
-        val zipUrl = "https://maven.parchmentmc.org/org/parchmentmc/data/parchment/$target/parchment-$target-tiny.zip"
-        val bytes = client.get(zipUrl).body<ByteArray>()
-        return extractEntry(bytes, "parchment.json")
-            ?: throw Exception("parchment zip 中未找到 parchment.json")
+        return versions.firstOrNull { it == mcVersion }
+            ?: versions.filter { it.startsWith("$mcVersion-") }.sortedDescending().firstOrNull()
+    }
+
+    private fun extractClientMappingsUrl(versionJson: String): String? {
+        return try {
+            val parsed = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                .parseToJsonElement(versionJson).jsonObject
+            parsed["downloads"]?.jsonObject
+                ?.get("client_mappings")?.jsonObject
+                ?.get("url")?.jsonPrimitive?.content
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun extractEntry(bytes: ByteArray, entryName: String): String? {
@@ -81,5 +153,6 @@ class MappingDownloader(private val client: HttpClient) {
 
     private companion object {
         val PARCHMENT_VERSION_RE = Regex("""<version>(.+?)</version>""")
+        val COMPASS_VERSION_RE = Regex("""compass\s*\{\s*version\s*=\s*'([^']+)'""")
     }
 }

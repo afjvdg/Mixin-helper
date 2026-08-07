@@ -29,6 +29,16 @@ interface MappingDao {
     )
     suspend fun fuzzySearchFts(query: String): List<MappingEntity>
 
+    // 实时建议：与 fuzzySearchFts 同构，仅取前 limit 条（搜索框下拉建议）
+    @Query(
+        """
+        SELECT m.* FROM mappings m
+        WHERE m.id IN (SELECT rowid FROM mappings_fts WHERE mappings_fts MATCH :query)
+        LIMIT :limit
+        """
+    )
+    suspend fun suggestFts(query: String, limit: Int): List<MappingEntity>
+
     // 已下载版本列表（搜索页版本选择器数据源）
     @Query("SELECT DISTINCT version FROM mappings WHERE version <> '' ORDER BY version DESC")
     suspend fun getDownloadedVersions(): List<String>

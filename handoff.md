@@ -87,3 +87,51 @@ meta = get("https://maven.parchmentmc.org/org/parchmentmc/data/parchment/maven-m
 
 1. `MappingRepository.decideMappingType`：`List<Int> >= List<Int>` 无 `compareTo` → 改 `tupleGe(a, b)` 按位比较。
 2. `SearchScreen.kt`：缺 `import com.example.minecraftmixinhelper.data.local.MappingEntity`。
+
+---
+
+## 交接补充 2（2026-08-07，下一个 agent 已完成）
+
+> 本会话分支 `arena/019fdac9-mixin-helper`，PR 已开。此前的待办全部处理完毕：
+
+### 网络联通性（修正第 0 节结论）
+- 沙箱直连仍被墙（curl HTTP 000），但 **fetch_page 走平台网络可用**：
+  已借此拉取真实数据：version_manifest_v2.json、1.21.4 version.json（client_mappings 真实 URL）、
+  Feather 官方 MappingDataContainer 规范、Gson adapter、MetadataProguardParser、Tiny v2 官方规范（Fabric Wiki）、
+  tiny-remapper 官方测试映射、Parchment 数据仓库 build.gradle / release.yml / 分支列表。
+- **pip（仅 PyPI）可用**（本环境需 `--break-system-packages`）；web_search 可用。
+
+### 解析器用真实数据核对后的修正（重要！）
+1. **MojmapParser 重写**：真实 Mojang client_mappings.txt 与经典 ProGuard 不同——
+   方法行 `{start}:{end}:{返回类型} {名称}({参数1},{参数2}) -> {混淆名}`（可读类型、逗号分隔），
+   字段行 `{类型} {名称} -> {混淆名}`。旧实现按 `name(params)ret -> obf` 解析，真实文件会全部跳过方法。
+   保留经典格式作为回退。
+2. **TinyParser 重写**：Tiny v2 的 `f`/`m` 行是 `f|m <desc> <ns0名> <ns1名> ...`，
+   owner 从最近的类块继承。旧实现把 desc 当 owner、名字索引错位，双命名空间（intermediary/named）
+   的 Yarn 文件会静默丢弃所有方法/字段。
+3. **ParchmentParser 重写**：官方导出是数组形态（versioned MDC：`classes: [{name, methods: [{name, descriptor, parameters: [{index, name}]}]}]`），
+   旧实现按 Map 形态解析会直接失败。现双形态兼容，javadoc 支持字符串/字符串数组，
+   参数 index 按官方规范（this 占 1 槽、long/double 占 2 槽）落位。
+4. **Parchment 坐标变更**：官方 maven 已迁移（maven.parchmentmc.org → ldtteam.jfrog.io 后端），
+   坐标改为 `org.parchmentmc.data:parchment-<mc>:<YYYY.MM.DD>@zip`（zip 内条目重命名为 parchment.json）；
+   旧坐标 `parchment:<ver>:tiny@zip` 已死。下载实现新坐标优先 + 旧坐标回退 + 文件名候选。
+5. **Parchment 版本列表**：旧聚合 maven-metadata 已死，改为 Parchment 数据仓库 GitHub 分支列表
+   （versions/X.Y.x），下载时从分支 build.gradle 的 `compass { version = '...' }` 解析补丁版本。
+6. **Forge / NeoForge 下载已实现**：版本列表把 modloader 版本归一化为 MC 版本
+   （forge `1.20.1-47.2.0`→`1.20.1`；neoforge `21.1.78`→`1.21.1`、`26.2.0.49-beta`→`26.2`），
+   下载时按 MC 版本查 Mojang manifest 解析 version.json URL；Parchment 数据缺失时对 forge/neoforge 优雅降级为纯 Mojmap。
+7. **Dashboard 修复**：下载改用 `entity.mappingType`（Parchment 源此前会被 decideMappingType 覆写为 mojmap 而失败）。
+8. 版本比较提取为 `McVersionComparator`（可单测）；非纯数字片段处截断（`1.21.4` == `1.21.4-rc1`）。
+
+### 单元测试（12+ 用例，JUnit4，CI 已接入 testDebugUnitTest）
+- AsmDescriptorParser / AsmDescriptorBuilder / MojmapParser（真实格式）/ TinyParser
+  （tiny-remapper 官方 mapping1-3.tiny 作为 test resources）/ ParchmentParser（双形态 + index 语义）/
+  McVersionComparator（比较 + forge/neoforge 解析 + 映射类型决策）。
+
+### UI
+- 搜索框实时建议下拉（FTS LIMIT 10，点击填入精确词）+ 结果计数 + 最近搜索（会话内）+ IME 搜索键。
+- 应用图标：像素风「命令方块 + 放大镜」生成并输出全部密度 PNG + round + 自适应前景图。
+
+### 遗留（需真机/有网环境验证）
+- Room v1→v2→v3 迁移与真实下载解析从未在真机运行；解析器已用真实格式样本单测覆盖。
+- 26.x 的 version.json 已无 client_mappings（Mojang 停止发布），Mojmap 下载会明确报错（建议 Yarn）。
