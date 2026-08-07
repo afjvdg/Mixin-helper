@@ -149,12 +149,15 @@ class MappingDownloader(private val client: HttpClient) {
         val methodsCsv = extractEntryBySuffix(bytes, "methods.csv")
             ?: throw Exception("MCP stable zip 中缺少 methods.csv")
         val fieldsCsv = extractEntryBySuffix(bytes, "fields.csv").orEmpty()
+        val paramsCsv = extractEntryBySuffix(bytes, "params.csv").orEmpty()
         val (methodNames, methodJavadocs) = McpParser.parseNameCsv(methodsCsv, withJavadoc = true)
-        val (fieldNames, _) = McpParser.parseNameCsv(fieldsCsv)
+        val (fieldNames, fieldJavadocs) = McpParser.parseNameCsv(fieldsCsv, withJavadoc = true)
         return McpParser.McpCsv(
             methods = methodNames,
             fields = fieldNames,
-            methodJavadoc = methodJavadocs
+            methodJavadoc = methodJavadocs,
+            fieldJavadoc = fieldJavadocs,
+            params = McpParser.parseParamCsv(paramsCsv)
         )
     }
 

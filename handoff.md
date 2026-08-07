@@ -139,3 +139,13 @@
 - 新增 `McpParserTest`（5 条断言，含引号逗号 Javadoc）。
 
 > 注意：Forge 1.16.x 在列表中标为 MCP，但下载时会因无稳定 MCP 自动回退 mojmap；若该版本无官方 client_mappings 则报错。
+
+## 12. MCP 配套功能补全（参数名 + 字段 javadoc，2026-08-07）
+
+上一轮已实现 MCP 的 joined.srg + methods/fields 名称下载解析。本轮补全 MCP 的**其余配套数据**：
+
+- **参数名（`params.csv`）**：MCP stable zip 内含 `params.csv`，列 `param,name,side`，param 形如 `p_<数字id>_<槽位>_`。槽位与 JVM 参数一致：非静态方法首参数从 1 起（0 为隐式 this），long/double 占 2 槽。`McpParser.parseParamCsv` 解析为 `funcId -> (槽位 -> 参数名)`；`buildParamNames` 结合 joined.srg 的 `func_<id>_<letter>` 与描述符参数类型，按槽位落到方法 `paramNames`。
+- **字段 javadoc（`fields.csv` 的 desc 列）**：`parseNameCsv(..., withJavadoc=true)` 现在同时解析字段描述，`McpParser` 的 `FD:` 分支把 `fieldJavadoc` 写入字段 `javadoc`。
+- `McpCsv` 新增 `fieldJavadoc` / `params` 字段；`MappingDownloader.downloadMcpStable` 从 zip 提取 `params.csv` 并解析。
+- 这些数据经通用的 `MappingEntity.paramNames` / `MappingEntity.javadoc` 入库，搜索页详情对话框自动展示（无需额外 UI 改动）。
+- 新增 `McpParserTest` 用例：字段 javadoc、参数名按槽位对齐（含静态方法 long 占 2 槽、真实 `setPosition(double,double,double)` 双槽验证）。
