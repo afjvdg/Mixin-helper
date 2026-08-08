@@ -229,3 +229,13 @@ DAO 的 `searchMappings / searchByDeobfuscated / searchByObfuscated / searchByCl
 
 ### UI：类型行改为显式「全部」
 原类型行（CLASS/METHOD/FIELD）靠「点击已选取消回全部」，不直观。现类型行改为 `全部 / CLASS / METHOD / FIELD`（显式 ALL chip），删除点击取消行为。字段行本就有「全部」。
+
+## 18. 修复类名搜索中的「.」问题（2026-08-08）
+
+**现象**：类名搜索输入 `client` 可搜到，但 `client.` 结果为空。
+**根因**：索引是**纯前缀匹配**（`startsWith`）。类名索引存完整点分路径（从 `net.minecraft.` 开头）与简单类名，输入 `client.` 时没有索引键以 `client.` 开头。
+**修复**：
+1. `MappingIndex` 用 **段路径索引（classNameSegments）** 取代原 classNameSimple：对每个类记录「从每个 `.` 段边界开始的路径前缀」，如 `net.minecraft.client.Minecraft` → `net.minecraft.client.minecraft` / `minecraft.client.minecraft` / `client.minecraft` / `minecraft`。这样 `client`、`client.`、`client.renderer` 都能命中对应包/类。
+2. **去掉查询末尾的连续 `.`**，使 `client.` 等价于 `client`（用户中途输入包分隔符）。
+3. 「全部」字段也纳入段路径索引。
+新增测试 `带尾点与段路径可命中`。

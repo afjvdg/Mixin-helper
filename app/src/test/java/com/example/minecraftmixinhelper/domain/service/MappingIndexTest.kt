@@ -56,6 +56,21 @@ class MappingIndexTest {
     }
 
     @Test
+    fun `带尾点与段路径可命中`() {
+        val idx = MappingIndex()
+        idx.rebuild(sample)
+        // 输入 "player." 与 "player" 等价（去掉尾点）
+        val (a, _) = idx.search("player.", "class", "", "", "", 100)
+        val (b, _) = idx.search("player", "class", "", "", "", 100)
+        assertEquals(a.map { it.id }.toSet(), b.map { it.id }.toSet())
+        assertTrue(a.map { it.id }.contains(1L))
+        // 中间段路径：net.minecraft.world 命中 Player 等
+        val (mid, _) = idx.search("world.entity.player.Player", "class", "", "", "", 100)
+        assertTrue(mid.map { it.id }.contains(1L))
+        assertTrue(mid.map { it.id }.contains(2L))
+    }
+
+    @Test
     fun `全部字段是各单独字段的并集超集`() {
         val idx = MappingIndex()
         idx.rebuild(sample)

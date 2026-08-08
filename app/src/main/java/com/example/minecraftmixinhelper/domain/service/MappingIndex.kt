@@ -20,8 +20,8 @@ class MappingIndex {
     private val entries = mutableListOf<MappingEntityRef>()
     private var deobf: Array<Entry> = emptyArray()
     private var obf: Array<Entry> = emptyArray()
-    private var className: Array<Entry> = emptyArray()   // 完整点分类名
-    private var classNameSimple: Array<Entry> = emptyArray() // 简单类名（`.` 后最后一段）
+    private var className: Array<Entry> = emptyArray()      // 完整点分类名
+    private var classNameSegments: Array<Entry> = emptyArray() // 从任意段边界起的路径前缀（含简单类名）
 
     /** 原始行（供回填完整实体）。 */
     data class MappingEntityRef(
@@ -48,14 +48,19 @@ class MappingIndex {
         deobf = build { it.deobfuscatedName }
         obf = build { it.obfuscatedName }
         className = build { it.className }
-        // 简单类名索引：取完整类名最后一个 `.` 后的段，使「Player」这类输入能命中。
-        classNameSimple = entries.mapIndexed { i, r ->
-            Entry(simpleName(r.className).lowercase(), i)
-        }.sortedBy { it.key }.toTypedArray()
+        // 段路径索引：对每个类，记录「从每个 `.` 段边界开始的路径前缀」。
+        // 例 net.minecraft.client.Minecraft -> net.minecraft.client.minecraft,
+        // minecraft.client.minecraft, client.minecraft, minecraft。
+        // 这样输入 "client" / "client." 都能命中 client 包下的类（而不仅是完整点分前缀或简单类名）。
+        val segmentKeys = mutableListOf<Entry>()
+        entries.forEachIndexed { i, r ->
+            val segs = r.className.lowercase().split('.')
+            for (k in segs.indices) {
+                segmentKeys.add(Entry(segs.subList(k, segs.size).joinToString("."), i))
+            }
+        }
+        classNameSegments = segmentKeys.sortedBy { it.key }.toTypedArray()
     }
-
-    private fun simpleName(full: String): String =
-        full.substringAfterLast('.', full)
 
     /**
      * 前缀搜索。
@@ -76,14 +81,16 @@ class MappingIndex {
         limit: Int
     ): Pair<List<MappingEntityRef>, Boolean> {
         if (prefix.isEmpty()) return emptyList<MappingEntityRef>() to false
-        val lower = prefix.lowercase()
+        // 去掉末尾连续 '.'，使「client.」等价于「client」（用户中途输入包路径分隔符）。
+        var lower = prefix.trim().lowercase().trimEnd('.')
+        if (lower.isEmpty()) return emptyList<MappingEntityRef>() to false
         val result = LinkedHashSet<MappingEntityRef>()
         val arrays = when (field.lowercase()) {
             "deobf" -> listOf(deobf)
             "obf" -> listOf(obf)
-            // 类名搜索同时匹配完整点分类名与简单类名（如「Player」），扩大命中。
-            "class" -> listOf(className, classNameSimple)
-            else -> listOf(deobf, obf, className, classNameSimple)
+            // 类名搜索：完整点分类名 + 任意段边界路径前缀（含简单类名）。
+            "class" -> listOf(className, classNameSegments)
+            else -> listOf(deobf, obf, className, classNameSegments)
         }
         var tooMany = false
         outer@ for (arr in arrays) {
