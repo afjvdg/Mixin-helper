@@ -1,241 +1,87 @@
 # Mixin-helper 交接文档（Handoff）
 
-> 最后更新：2026-08-07。本文合并了历次交接的全部内容，只保留**当下有效**的信息。
-> 项目：Minecraft Mixin Helper —— Android 端 Minecraft 模组开发辅助工具，多源映射（Mojang / Fabric Yarn / Forge / NeoForge / Parchment）下载解析、Room+FTS4 离线存储与搜索。
+> 最后更新：2026-08-08。功能已全部完成并可用。本文只保留**当下有效**的信息，供下一个 agent 交接。
+> 项目：Minecraft Mixin Helper —— Android 端 Minecraft 模组开发辅助工具，多源映射下载解析、离线存储、毫秒级实时搜索。
 
 ---
 
 ## 1. 仓库与代码状态（当下）
 
-- 本地仓库位于 `/home/user/Mixin-helper`，分支 `arena/019fdac9-mixin-helper`（基于 main `e829ada`），**工作树干净**，所有成果已提交（最近提交 `79c0d2d`）。
-- **PR #6 已合并/关闭，本会话 GitHub 远程权限失效**（无法 push / 开 PR）。下一个 agent 须在新会话中从本地仓库推新分支开新 PR。
-- 功能清单（全部完成）：4 个解析器、多源版本列表、下载编排（Mojmap/Yarn/Parchment + Forge/NeoForge 归一化）、Room v1→v2→v3 迁移、FTS4 搜索、搜索建议下拉 + 最近搜索、Dashboard/Search UI、应用图标（全密度 + 自适应）。
-- CI（`assembleDebug`）曾在 PR #6 上验证通过；`testDebugUnitTest` 步骤**未合入** CI（见 §5）。
+- 本地仓库 `/home/user/Mixin-helper`，工作分支 `arena/019fdbb9-mixin-helper`（远程同名分支已推送），基于 `main`。
+- **全部成果位于 PR #8**（OPEN）：`https://github.com/afjvdg/Mixin-helper/pull/8`。尚未合并到 `main`。
+- 功能清单（全部完成）：
+  - 多源版本列表（Fabric / Forge / NeoForge）+ 与 Mojang 正式版对照过滤 + 版本降序排序。
+  - 下载编排：Yarn(Tiny v1/v2) / Mojang client_mappings / MCP(Forge Maven joined.srg + stable CSV) / Parchment(新坐标) + Forge/NeoForge 归一化。
+  - 离线存储（Room）v1→v2→v3 迁移。
+  - 内存前缀自动补全搜索（可读名/混淆名/类名，支持简单类名与段路径）。
+  - Dashboard / Search 双界面、后台下载 + 全局锁 + 进度/速度显示。
+  - 应用图标（全密度 + 自适应）。
+- CI：`testDebugUnitTest` + `assembleDebug` 每次构建都跑，当前 **通过**。
 
-## 2. 环境与网络（可能因环境而需要改变，以实测为准）
+## 2. 环境与网络
 
-- 沙箱直连外网被墙：curl / urllib 全部失败（HTTP 000 / TLS 被切断）；**无法本地跑 Gradle**（依赖仓库不可达），编译/测试以 GitHub CI 为准。
-- `fetch_page` ✅ 走平台网络，可抓取真实网页 / JSON / GitHub API 与 raw 文件（是获取真实数据的唯一通道；大文件如 10MB client_mappings.txt 会被截断/502，宜找小样本或官方测试资源）。
-- `web_search` ✅；`pip` ✅ 仅限 PyPI（需 `--break-system-packages`，Pillow 已装）。
+- 沙箱直连外网被墙（curl/urllib 失败），**无法本地跑 Gradle**；编译/测试以 GitHub CI 为准。
+- `fetch_page` ✅（平台网络，抓真实网页/JSON/GitHub API/raw）；`web_search` ✅；`pip` ✅（PyPI，需 `--break-system-packages`）。
 
-## 3. 映射格式要点（已用真实数据/官方源码核实，改代码时勿凭记忆重写）
+## 3. 数据源与格式要点（改代码时勿凭记忆重写）
 
-### 3.1 Mojang client_mappings.txt（ProGuard 变体，参考 Feather io-proguard `MetadataProguardParser`）
-- 类行：`pkg.Class -> obf:`（冒号结尾）
-- 方法行：`[start:end:]返回类型 名称(参数1, 参数2) -> obf` —— 可读类型、逗号分隔、数组用 `[]` 后缀；描述符由代码转 JVM 形式
-- 字段行：`类型 名称 -> obf`
-- 保留经典 ProGuard 格式（`name(params)ret -> obf` / `name:desc -> obf`）作回退
-- 26.x+ 的 version.json 已无 `client_mappings`（Mojang 停止发布）→ 明确报错并建议 Yarn
+### 3.1 Mojang client_mappings.txt（ProGuard 变体）
+- 类行：`pkg.Class -> obf:`；方法行：`[start:end:]返回类型 名称(参数1, 参数2) -> obf`；字段行：`类型 名称 -> obf`；描述符由 `AsmDescriptorBuilder` 生成 JVM 形式。
+- 保留经典 ProGuard 格式作回退。
+- 26.x+ 无 `client_mappings` → 明确报错并建议 Yarn。
 
-### 3.2 Tiny v2（参考 Fabric Wiki `documentation:tiny2`、tiny-remapper 测试资源）
-- 表头：`tiny 2 0 <ns0> <ns1> ...`；类行 `c <ns0名> <ns1名>`；成员行 `f|m <desc> <ns0名> <ns1名> ...`（**desc 在前，owner 从最近类块继承**）；`p` 为参数行
-- **必须两遍解析**：真实 Yarn 类按字典序排列，成员描述符可引用「后置定义」的类；单遍解析会让描述符重映射失效（已踩坑，见 §4）
-- 描述符按规范引用「源」命名空间类名，输出前用完整 classMap 重映射为可读命名空间
+### 3.2 Tiny v1 / v2
+- v2 表头 `tiny 2 0 <ns>...`；类行 `c`，成员行 `f|m <desc> <ns0名> <ns1名>`（owner 从最近类块继承）；`p` 参数行。
+- v1 头 `v1 <ns>...`，扁平 `CLASS/FIELD/METHOD <owner> <desc> <ns0名> <ns1名>`。
+- **必须两遍解析**（真实 Yarn 类字典序，成员描述符可引用后置类）；两遍都先把完整 classMap 收集齐再输出成员。
+- 命名空间：源取 intermediary/hashed/yarn/official，目标可读取 named/mojang/official；描述符按规范引用源命名空间类名，输出前重映射为可读。
 
-### 3.3 Parchment JSON（参考 Feather `docs/specs/MappingDataContainer.md` 与 Gson adapter）
-- 官方导出是**数组形态**（versioned MDC）：`{"version","packages":[{"name"}],"classes":[{"name","javadoc":[行...],"methods":[{"name","descriptor","parameters":[{"index","name"}]}]}]}`
-- 参数 index 语义：非静态方法从 1 起（0 = 隐式 this），long/double 占 2 槽；解析时按槽位落位
-- javadoc 为按行数组，join 后需 `trimEnd()`
-- 解析器兼容旧 Map 形态（`classes: {类名: {methods: {"name(desc)ret": {...}}}}`）作为回退
+### 3.3 Parchment JSON（数组形态）
+- `{"version","classes":[{"name","javadoc":[行],"methods":[{"name","descriptor","parameters":[{"index","name"}]}]}]}`；兼容旧 Map 形态作回退。
+- 参数 index：非静态方法从 1 起（0=隐式 this），long/double 占 2 槽。
+- javadoc 为按行数组，join 后 `trimEnd()`。
 
-### 3.4 Parchment 数据源（真实世界已变化，旧 URL 已死）
-- maven 后端迁移（maven.parchmentmc.org → ldtteam.jfrog.io），**坐标改为** `org.parchmentmc.data:parchment-<mc>:<YYYY.MM.DD>@zip`（zip 内条目为 `parchment.json`）；旧坐标 `parchment:<ver>:tiny@zip` 作回退
-- 版本列表用 GitHub 分支 API（`ParchmentMC/Parchment` 的 `versions/X.Y.x` 分支）；补丁版本（如 1.21 → 1.21.11）从分支 `build.gradle` 的 `compass { version = '...' }` 解析
-- **zip 文件名已实网确认**（2026-08-07 经 ldtteam JFrog 目录列表核实 1.21.1 / 1.21.8）：**`parchment-<mc>-<date>.zip`**（如 `parchment-1.21.1-2024.11.17.zip`、`parchment-1.21.8-2025.07.20.zip`）；`officialExport-<date>.zip` 为历史遗留命名，**真实仓库中不存在**，已从代码移除
-- **仓库 base 已实网确认并修正**：真实仓库在 `https://ldtteam.jfrog.io/artifactory/parchmentmc-public/`（注意是 `parchmentmc-public` 而非 `parchmentmc`）；`maven.parchmentmc.org` 现重定向到该 JFrog 仓库。`MappingDownloader` 新坐标已改为优先请求 JFrog、`maven.parchmentmc.org` 兜底
+### 3.4 Parchment 数据源（已迁移）
+- 后端已迁到 ldtteam JFrog：`https://ldtteam.jfrog.io/artifactory/parchmentmc-public/`（注意 `parchmentmc-public` 非 `parchmentmc`）；`maven.parchmentmc.org` 现重定向过去，作兜底。
+- 坐标 `org.parchmentmc.data:parchment-<mc>:<YYYY.MM.DD>@zip`（zip 内 `parchment.json`）；旧坐标回退。
+- zip 文件名实网确认：`parchment-<mc>-<date>.zip`（如 `parchment-1.21.1-2024.11.17.zip`）；`officialExport-*` 已移除（不存在）。
 
 ### 3.5 Forge / NeoForge 版本归一化
-- forge：`1.20.1-47.2.0` → `1.20.1`；neoforge：`21.1.78` → `1.21.1`、`26.2.0.49-beta` → `26.2`（MC 26+ 直接以 MC 版本为前缀）
-- 下载时按 MC 版本查 Mojang manifest 解析 version.json URL；Parchment 数据缺失时对 forge/neoforge 优雅降级为纯 Mojmap
-- 版本比较：数字元组逐位比较，遇非纯数字片段截断（`1.21.4` == `1.21.4-rc1`）
+- forge：`1.20.1-47.2.0` → `1.20.1`；neoforge：`21.1.78` → `1.21.1`、`26.2.0.49-beta` → `26.2`（MC26+ 直接以 MC 为前缀）。
+- 版本比较：数字元组逐位比较，非数字片段截断。
+- 下载按 MC 版本查 Mojang manifest 解析 version.json URL；Parchment 缺失对 forge/neoforge 降级为纯 Mojmap。
+
+### 3.6 MCP（Forge <1.17，Forge Maven）
+- `de/oceanlabs/mcp/mcp/<mc>/mcp-<mc>-srg.zip` → `joined.srg`（`CL:`/`FD:`/`MD:`，混淆名→SRG，类名即可读）。
+- `de/oceanlabs/mcp/mcp_stable/<build>-<family>/mcp_stable-<build>-<family>.zip` → `methods.csv`/`fields.csv`/`params.csv`，覆盖 1.7.10~1.15。
+- CSV 列：`searge,name,side,desc`（MCP 名在 index1，desc=index3 Javadoc）；params：`p_<id>_<槽位>_`（非静态从 1 起，long/double 占 2 槽）。
+- 三级命名链：Notch → SRG(`func_xxx`/`field_xxx`) → MCP 可读名。
 
 ## 4. 代码坑（已踩过，避免重踩）
 
-- **`contentOrNull` 是扩展属性**：ktor 2.3.7 → kotlinx-serialization-json 1.5.1，`JsonPrimitive.contentOrNull` 必须显式 `import kotlinx.serialization.json.contentOrNull`（漏了会整片编译失败）
-- **`Regex.matches()` 是整串匹配**：做前缀校验要用 `containsMatchIn`（`McVersionComparator` 已踩；`MappingDownloader.kt:103` 的 `^\d+\.\d+$` 是整串匹配的正确用法，勿改）
-- **Kotlin 反引号函数名不允许 `> < : ; [ ] / \` 等字符**（测试方法名里写 `->` 会编译失败，用「到」代替）
-- Dashboard 下载必须用 `entity.mappingType`（`decideMappingType` 只是兜底；Parchment 源曾被覆写为 mojmap 而必然失败）
-- FTS4 前缀匹配写法 `MATCH "\"词\"*"`（输入先清洗特殊字符）；Room 查询用子查询避免 FTS 表 JOIN 别名混用
-- **自适应图标前景必须是「有密度限定符」的位图**：`ic_launcher_foreground.png`（108×108）**不能放在 `mipmap-anydpi-v26/`**（`anydpi` = 密度无关，放位图会让资源表无法解析尺寸，第三方工具/系统读图标时得到宽高 0 → `Bitmap.createBitmap: width and height must be > 0`，表现为图标纯色/无法渲染）。应放在 `mipmap-xxxhdpi/ic_launcher_foreground.png`，`mipmap-anydpi-v26/` 只留 `ic_launcher.xml` / `ic_launcher_round.xml`
-- **纯 Compose 应用不要引用 `Theme.Material3.*` XML 主题**：它来自 `com.google.android.material`（未声明该依赖），应使用框架 `android:Theme.Material.Light.NoActionBar`（详见 §8）
+- `JsonPrimitive.contentOrNull` 需显式 `import kotlinx.serialization.json.contentOrNull`。
+- `Regex.matches()` 是整串匹配；前缀校验用 `containsMatchIn`（`MappingDownloader` 的 `^\d+\.\d+$` 是整串匹配正确用法）。
+- Kotlin 反引号函数名不允许 `> < : ; [ ] / \` 等字符。
+- **`object` 里不能用 `companion object`**（常量直接作为 `object` 的成员，否则编译失败）。
+- 自适应图标前景位图（108×108）**必须**放 `mipmap-xxxhdpi/`，不能放 `mipmap-anydpi-v26/`（`anydpi`=密度无关，放位图会致资源无法解析尺寸 → 图标纯色/无法渲染）。
+- 纯 Compose 应用**不要**引用 `Theme.Material3.*` XML 主题（来自未声明的 `com.google.android.material`），用框架 `android:Theme.Material.Light.NoActionBar`。
+- **kotlinx.serialization 必须应用编译器插件** `org.jetbrains.kotlin.plugin.serialization` + 依赖 `kotlinx-serialization-json`，否则 `@Serializable` 运行时无序列化器（`Serializer not found`）。
+- 内存搜索索引：排序与二分都**必须用小写 key**，否则大小写混合致二分失效。
 
 ## 5. 测试现状
 
-- 36 个 JUnit4 用例（AsmDescriptorParser/Builder、MojmapParser、TinyParser、ParchmentParser、McVersionComparator），测试资源含 tiny-remapper 官方 `mapping1-3.tiny`
-- 首轮 CI 跑出 **9 个失败，已全部修复**（本地提交 `79c0d2d`）：
-  - Parser bug（真实功能影响）：`AsmDescriptorParser` 数组维度拼在类型名前；`McVersionComparator` 用 `matches()` 整串匹配导致三段版本号被拒（Forge 列表丢版本）；`TinyParser` 单遍解析导致后置类引用重映射失效（改两遍解析）
-  - Test bug：MojmapParserTest 方法数 3→4、getPoses 描述符补 `()`；TinyParserTest mapping1 类名断言写反
-  - 不一致：`ParchmentParser.javadocOf` 数组形态 join 后 `trimEnd()`
-- 修复已用 Python 逐断言模拟验证，但**未在真实 JVM 跑过**——下一 agent 开 PR 后以 CI 的 `testDebugUnitTest` 为最终裁决，预期 36/36 全绿
-- **CI 单测步骤未合入**：仓库规则要求修改 `.github/workflows/*` 需 `workflows` 权限（GitHub App 无）。测试代码已就绪，仓库所有者在 `assembleDebug` 前手动加一行 `./gradlew testDebugUnitTest -q` 即可
+- 单元测试：AsmDescriptorBuilder/Parser、MojmapParser、TinyParser(v1&v2)、ParchmentParser、McpParser、McVersionComparator、MappingIndex。测试资源含 tiny-remapper 官方 `mapping1-3.tiny`。
+- CI 每次构建跑 `testDebugUnitTest`，当前全绿。
 
-## 6. 遗留事项（需真机 / 有网环境）
+## 6. 遗留事项（需真机 / 有网环境，代码已就绪）
 
-- Room v1→v2→v3 迁移从未在真机运行
-- Mojmap / Yarn / Parchment 真实下载 + 解析的端到端从未验证（解析器已有真实格式样本单测覆盖）
-- ~~Parchment 新坐标 zip 文件名候选~~ 已实网确认（`parchment-<mc>-<date>.zip`，见 §3.4），代码已同步修正 base URL 与文件名
+- Room v1→v2→v3 迁移未在真机升级路径实测。
+- 各源真实下载+解析的端到端（Dashboard 下载 → 入库 → 搜索）未在真机完整验证（解析器已有真实格式单测覆盖）。
+- Parchment 新坐标的运行时下载未在真机实测（文件名/base 已实网确认）。
 
-## 7. 下一步（给下一个 agent）
+## 7. 给下一个 agent
 
-1. 新会话中直接基于本地仓库（已含全部修复）推新分支 → 开 PR → CI 跑 `assembleDebug` + `testDebugUnitTest`
-2. 若测试仍有失败，按 §3 格式要点与 §4 代码坑排查
-3. 向仓库所有者说明：在 CI 补单测步骤（一行命令，需 workflows 权限）
-4. 有条件时做真机端到端验证（§6）
-
-## 8. 安装闪退 / 图标问题排查记录（2026-08-07）
-
-现象：真机（Android 16 / SDK 36）安装应用时「安装程序闪退」，MT 管理器显示图标为纯色，其尝试提取图标为 PNG 时抛 `IllegalArgumentException: width and height must be > 0`。
-
-已修复两处「前置」根因：
-1. **自适应图标前景位图放错目录**：`ic_launcher_foreground.png` 原在 `mipmap-anydpi-v26/`（`anydpi` = 密度无关），位图无密度限定符，资源表无法解析其尺寸 → 第三方/系统读图标得到宽高 0。已 `git mv` 至 `mipmap-xxxhdpi/ic_launcher_foreground.png`（108×108 为标准 xxxhdpi 前景尺寸），`mipmap-anydpi-v26/` 只保留两个 adaptive-icon XML。
-2. **纯 Compose 项目引用了未声明的 XML 主题**：`Theme.Material3.DayNight.NoActionBar` 来自 `com.google.android.material`，但 `build.gradle.kts` 未声明该依赖，且该 style 是自引用（parent=自身）→ 无法解析。已改为框架主题 `android:Theme.Material.Light.NoActionBar`（API 21+，minSdk 26 恒可用），应用与 Activity 的 `android:theme` 均指向新的 `Theme.MinecraftMixinHelper`。
-
-图标 PNG 本身经验证均为标准 8-bit RGBA、尺寸合规、内容正常，**非图标图片损坏**；问题在资源放置位置与主题依赖。
-
-> 若换装后仍失败，需补充真机报错文案（如 "There was a problem parsing the package" / "App not installed" / logcat）与目标 SDK、签名信息进一步定位。
-
-## 9. 版本列表 / 下载失败 / UI 修复记录（2026-08-07）
-
-现象（真机复现）：
-- 下载报 `Serializer for class 'VersionManifest' is not found`、`缺少 version.json URL`
-- 版本列表不全（mojmap / fabric 空白，forge / neoforge 不全）
-- 加载器筛选框被挤压、提示/进度被版本列表遮住、下载按钮可重复点击
-
-已修复：
-1. **kotlinx.serialization 编译器插件缺失**（致命根因）：`@Serializable` 类（`VersionManifest` / `FabricGameVersion` / `YarnVersion` 等）因未应用 `org.jetbrains.kotlin.plugin.serialization` 而**运行时无序列化器** → `body()` 反序列化抛 "Serializer not found"，导致 mojang / fabric 版本源整源空白。已：`gradle/libs.versions.toml` 加 `jetbrains-kotlin-serialization` 插件（version.ref=kotlin）与 `kotlinx-serialization-json:1.6.3`；`app/build.gradle.kts` 应用插件并加依赖。
-2. **移除独立 Parchment 源**：Parchment 不再单独列（随 forge/neoforge 一起下载），删除 `fetchParchmentVersions` / `ForgeNeoForgeApi.getParchmentBranches`。这也消除了独立 Parchment 源 `versionJsonUrl` 为空导致的 `缺少 version.json URL` 报错。
-3. **loader 改名 mojang→mojmap**：`fetchMojangVersions`→`fetchMojmapVersions`，loader="mojmap"。
-4. **版本过滤规则**：`isSupportedMcVersion` 只删 `1.13.x` 与 `>=26`（`McVersionComparator.compare(v,"26")<0`），其余全保留；forge/neoforge 不再 `take(10)` 截断，改为归一化 MC 版本后 `distinct()` + 版本降序排序。
-5. **UI**：加载器选项改为 `ALL/Mojmap/Fabric/Forge/NeoForge`，筛选行改 `horizontalScroll`（横向滑动，不再被挤压/垂直拉伸）；状态提示/进度条移到版本列表**上方**（不被遮住）；下载按钮用 `downloadingIds` 集合禁用防重复点击，已缓存条目不显示按钮。
-
-## 10. 映射类型区分 / 版本对照 / 下载与搜索重构（2026-08-07）
-
-现象（真机复现）：
-- forge 未区分 MCP 与 mojmap 版本；出现预览版（1.7.10pre4）与垃圾版本（neoforge 1.0.3/1.0.4）
-- fabric 版本不全（只有 1.21.11），且下载报 `不是合法的Tiny映射文件: v1 official intermediarynamed`
-- 下载可并发无提示；搜索有“全部版本”“ALL”选项；联想菜单不符合预期
-
-已修复：
-1. **Forge MCP / mojmap 区分**：`McVersionComparator.decideMappingType` 改为 forge <1.17→`mcp`、>=1.17→`parchment`（mojmap+Parchment 捆绑），neoforge 恒为 `parchment`。UI 用 `MappingTypeLabel` 显示 `MCP` / `Mojmap + Parchment`。mcp 下载会明确报“暂不支持”。
-2. **版本与 MC 正式版对照过滤**：`getSupportedMcVersions()` 取 Mojang manifest 的 `release` 正式版（>=1.7.10、非 1.13、<26）作为权威集合；fabric（用 `/v2/versions/game`）、forge、neoforge 归一化后都与该集合对照，从而剔除 `1.7.10pre4` 预览版与 neoforge `1.0.3→1.1` 等垃圾版本。
-3. **TinyParser 支持 Tiny v1**：Yarn 部分版本产出 `v1` 头（扁平结构 `CLASS/FIELD/METHOD owner desc <ns0> <ns1> ...`），现可解析；同时修正命名空间选择：可读目标取 `named`（而非 `official`）。
-4. **后台下载 + 全局下载锁**：新增应用级单例 `DownloadManager`（独立 CoroutineScope），下载不再随界面销毁而取消；同一时刻只允许一个下载，再次触发给出提示；进行中所有下载按钮禁用。
-5. **移除独立 mojmap 源**：加载器选项改为 `ALL/Fabric/Forge/NeoForge`（Mojang 官方映射并入 forge）。
-6. **搜索重构**：删除联想菜单（结果直接在结果区实时呈现）；类型只保留 `CLASS/METHOD/FIELD`；版本范围删除“全部版本”，改为“版本 (加载器)”对；`fuzzySearch` 合并 FTS 前缀 + LIKE 子串匹配（输入 `pla` 可命中 play/player）。
-
-## 11. MCP 映射在线下载支持（2026-08-07）
-
-背景：Forge <1.17 使用 MCP 映射，此前代码对 MCP 直接抛「暂不支持在线下载」。原 MCPBot（mcpbot.bspk.rs）已下线，但 MCP 数据**稳定、全面**地托管在 **Forge Maven**（`maven.minecraftforge.net/de/oceanlabs/mcp/`），无需真机，可持续在线下载。
-
-来源与格式（已实网核实）：
-- `mcp/<mc>/mcp-<mc>-srg.zip` → 内含 `joined.srg`：`PK:` 包 / `CL:` 类 / `FD:` 字段 / `MD:` 方法（混淆名 -> SRG 名；类名即可读类名）。
-- `mcp_stable/<build>-<family>/mcp_stable-<build>-<family>.zip` → 内含 `methods.csv` / `fields.csv`，列 `searge,name,side,desc`，**MCP 可读名在 `name`（index 1）**，`desc`（index 3）是 Javadoc。覆盖 1.7.10 ~ 1.15。
-- mcp_stable 版本形如 `<build>-<family>`（`39-1.12`、`22-1.8.9`、`12-1.7.10`）；family 是映射家族，从 `mcp_stable/maven-metadata.xml` 解析。
-
-实现：
-- 新增 `McpParser`（domain/service）：解析 joined.srg + CSV → `List<ParsedMapping>`（类/方法/字段），描述符引用可读类名；`parseNameCsv` 尊重引号内逗号。
-- `MappingDownloader.downloadMcpSrg` / `downloadMcpStable`：从 Forge Maven 下载并解压；`pickMcpStableVersion` 按 MC 版本匹配最长 family 并取最高 build。
-- `MappingRepository` 的 `mcp` 分支：先下载 MCP；**1.16.x 无稳定 MCP → 回退 Mojang 官方映射**（MCP 仅发布到 1.15）。
-- 新增 `McpParserTest`（5 条断言，含引号逗号 Javadoc）。
-
-> 注意：Forge 1.16.x 在列表中标为 MCP，但下载时会因无稳定 MCP 自动回退 mojmap；若该版本无官方 client_mappings 则报错。
-
-## 12. MCP 配套功能补全（参数名 + 字段 javadoc，2026-08-07）
-
-上一轮已实现 MCP 的 joined.srg + methods/fields 名称下载解析。本轮补全 MCP 的**其余配套数据**：
-
-- **参数名（`params.csv`）**：MCP stable zip 内含 `params.csv`，列 `param,name,side`，param 形如 `p_<数字id>_<槽位>_`。槽位与 JVM 参数一致：非静态方法首参数从 1 起（0 为隐式 this），long/double 占 2 槽。`McpParser.parseParamCsv` 解析为 `funcId -> (槽位 -> 参数名)`；`buildParamNames` 结合 joined.srg 的 `func_<id>_<letter>` 与描述符参数类型，按槽位落到方法 `paramNames`。
-- **字段 javadoc（`fields.csv` 的 desc 列）**：`parseNameCsv(..., withJavadoc=true)` 现在同时解析字段描述，`McpParser` 的 `FD:` 分支把 `fieldJavadoc` 写入字段 `javadoc`。
-- `McpCsv` 新增 `fieldJavadoc` / `params` 字段；`MappingDownloader.downloadMcpStable` 从 zip 提取 `params.csv` 并解析。
-- 这些数据经通用的 `MappingEntity.paramNames` / `MappingEntity.javadoc` 入库，搜索页详情对话框自动展示（无需额外 UI 改动）。
-- 新增 `McpParserTest` 用例：字段 javadoc、参数名按槽位对齐（含静态方法 long 占 2 槽、真实 `setPosition(double,double,double)` 双槽验证）。
-
-## 13. 搜索增强 / 版本排序修复 / 下载进度（2026-08-07）
-
-### 搜索（修复 Issue 1、2）
-- **根因**：`SearchViewModel` 默认 `_type="CLASS"`，导致输入 `get` 只搜 CLASS，而 `getX` 是 METHOD 被过滤 → 搜不到。现默认 `type=""`（全部类型），点击类型 chip 过滤，再点已选中项可取消回「全部」。
-- **搜索字段选择**：新增「全部 / 可读名 / 混淆名 / 类名」chips（`SearchViewModel._field`，值 deobf/obf/class/""）。`MappingDao` 增加 `searchByDeobfuscated` / `searchByObfuscated` / `searchByClassName`；`MappingRepository.fuzzySearch` 增加 `field` 参数，`type` 默认 ""（全部）。子串 LIKE 保证 `get` 命中 `getX` 等方法。
-- **混淆名搜索的实用性**（评估结论）：有用——modder 在写 `ObfuscationReflectionHelper`、ASM 字节码注入、读玩家崩溃日志（stacktrace 里是 SRG 名 `func_xxx`/`field_xxx`）时常需用混淆名反查可读名。故保留，但作为独立「混淆名」选项，默认搜可读名。
-
-### 版本排序（修复 Issue 5）
-- **根因**：`VersionDao.getAllVersions()` 用 `ORDER BY lastUpdated DESC`（插入时间），把仓库里按版本号排好的顺序覆盖成了乱序（如 1.10/1.8/1.16.2）。现 `DashboardViewModel` 在收集后用 `McVersionComparator.compare(b.version, a.version)` 内存降序排序。
-- 排序算法本身正确（数字元组逐位比较：1.16.2>1.14.4>1.12.2>1.10.2>1.8.9，1.21.11>1.20.1>1.19.2>1.18）。
-
-### 下载进度 + 速度（Issue 3）
-- `MappingDownloader` 新增 `DownloadProgressListener`（fun interface）与 `bindProgressListener`，用 ktor `onDownload { bytesSentTotal, contentLength -> }` 逐字节上报。
-- `DownloadManager` 暴露 `progress: StateFlow<DownloadProgress>`（downloaded/total/speed/percent），计算速度。
-- Dashboard 加载态改为：有总长时显示确定进度条 + `已下载/总量 · 速度/s`，无总长时回落不确定进度条。
-
-### Forge vs NeoForge 映射差异（Issue 4，确认）
-- 研究结论：**两者在 mod 编写时使用的映射名相同**——都基于 **Mojang 官方映射（mojmap）**，通常叠加 **Parchment**（参数名+Javadoc）。Forge 自 1.17 起、NeoForge 自 1.20.1 起使用 mojmap。
-- 差异仅在 **Forge <1.17**：Forge 1.17 之前用 **MCP**（社区映射，SRG 名 `func_xxx`/`field_xxx`），NeoForge 没有 <1.17 的旧版本。
-- 当前 app 实现已一致：forge>=1.17 与 neoforge 都是 `parchment`（mojmap+Parchment 捆绑下载），forge<1.17 是 `mcp`。无需改动。
-
-## 14. 搜索改为内存前缀自动补全 + MCP 显示设计（2026-08-08）
-
-### Fatal：修复「全部」与单独字段搜索结果不一致
-**根因**：旧实现里 `field=""`（全部）走 FTS 前缀 + LIKE 子串合并，而单独字段（deobf/obf/class）各自走 LIKE 子串查询——两种匹配语义不同，导致「全部」结果反而更少且不同。
-**方案**：按用户建议采用「有序数组 + 二分查找」的**内存前缀索引**（数据量 1~5MB，单机毫秒级）：
-- 新增 `MappingIndex`（domain/service）：对 deobf/obf/class 各维护一个按**小写名**排序的字符串数组，输入前缀用二分定位 `>=` 前缀的下标再顺序扫描前缀段。
-- 「全部」= 三字段前缀命中的**并集**，天然 ≥ 任一单独字段，且各字段语义一致（都是前缀匹配）。
-- 结果截断：命中超 `limit`（默认 100）时返回前 100 并置 `tooMany`，UI 提示「结果过多，请继续输入」。
-- 防抖 250ms→150ms。
-
-**修复的排序 bug**：排序必须与二分比较都用**小写**，否则大小写混合导致二分失效（`MappingIndex.Entry` 存 `key`=小写名）。
-
-**接线**：`MappingRepository.rebuildSearchIndex()` 从 DAO 全量加载轻量行（`getAllIndexRows`）建索引；下载完成后重建；`SearchViewModel` 启动时若未就绪则重建。搜索改走 `prefixSearch()`，命中后按 id 批量回填完整实体（`getByIds`）。
-
-### error1：MCP 映射显示设计
-MCP 特色是**三级命名链**（Notch 混淆 → SRG `func_xxx`/`field_xxx` → MCP 可读名）：
-- 搜索结果列表：MCP 的方法/字段显示「SRG 名: func_xxx」（而非「混淆名」）；CLASS 显示「混淆名」。
-- 详情对话框：MCP 下 CLASS 显示「混淆类名(Notch)」，成员显示「SRG 名」。
-
-### 询问：Parchment 注释/补充信息利用情况
-已合理利用：
-- Forge≥1.17 / NeoForge 下载时下载 Parchment（`downloadParchmentJson`），解析后 `applyParchment` 把**参数名 paramNames + Javadoc** 叠加到对应 Mojang 方法/类上。
-- 详情对话框会显示「参数名」「Javadoc」。但**暂未做 Javadoc 全文搜索**（`MappingIndex` 只索引 可读名/混淆名/类名，不索引 javadoc/paramNames）。
-
-### 移除的旧搜索路径
-DAO 的 `searchMappings / searchByDeobfuscated / searchByObfuscated / searchByClassName / fuzzySearchFts / suggestFts` 及 repository 的 `toFtsMatchQuery` 全部删除（内存索引取代）。
-
-## 15. 搜索结果截断上限 200 + 默认限定单版本（2026-08-08）
-
-- **截断上限**：`MappingRepository.prefixSearch` 默认 `limit` 由 100 → **200**。命中超限时返回前 200 条并置 `tooMany`，UI 提示「结果过多，仅显示前 N 条，请继续输入」。
-- **版本加载方式（回答用户询问）**：当前是**一次性全量加载所有已下载版本**的映射行进内存索引（`getAllIndexRows` 全表，几 MB 级），搜索时按 `version` 参数在内存索引内过滤——**并非只加载本次搜索的版本**。数据量小，全量建索引成本可忽略且检索毫秒级。
-- **改进**：为避免未选择版本时跨版本混合结果，`SearchViewModel` 在加载版本列表后**默认选中最近下载的「版本+加载器」**（`getDownloadedVersionLoaders` 按版本降序，第一条即最新），搜索默认限定在单个版本内。新增 `selectedVersionLoader` StateFlow 供 UI 展示选中项。
-
-## 16. 索引懒加载：单版本驻留 + 切换版本时卸载切换（2026-08-08）
-
-用户理想：**用户开始输入时才加载所选版本的文件**；单次搜索后**不卸载**（会继续输入）；**切换版本时卸载旧版本并加载新版本**。
-
-实现：
-- 索引 `MappingIndex` 现**只保留当前选中版本**的数据（不再一次性加载全部版本）。
-- `MappingRepository`：
-  - `ensureIndexFor(version, loader)`：索引版本 == 目标 → 复用（不重建，满足"单次搜索后不卸载"）；否则 `loadIndexFor` 卸载旧版本、仅加载新版本（满足"切换版本卸载并切换"）。
-  - `prefixSearch` 在**用户开始输入**（搜索调用）时才调用 `ensureIndexFor`，实现"输入时才加载"。
-  - 下载完成：若恰好在索引当前版本则重建，否则由懒加载兜底。
-- 移除 DAO `getAllIndexRows`（不再全量加载），新增 `getIndexRowsFor(version, loader)` 只取单版本行。
-- `SearchViewModel` 不再启动时急切建索引（删 `rebuildSearchIndex`/`isSearchIndexReady`），改由 `prefixSearch` 内懒加载。
-
-## 17. 修复类名搜索 + 下载速度 + 类型行显式 ALL（2026-08-08）
-
-### fatal：类名搜索什么都搜不到
-**根因**：类名索引存的是**完整点分路径**（`net.minecraft.world.entity.player.player`），用户输入简单类名 `player` 不是其前缀 → 空结果。
-**修复**：`MappingIndex` 新增 `classNameSimple` 索引（取完整类名 `.` 后最后一段，如 `player`），搜索 `class` 字段时**同时**匹配完整类名与简单类名。`全部` 字段也纳入简单类名。新增测试 `类名搜索支持简单类名`。
-
-### error：下载速度错误
-**根因**：`onDownload` 每次读块触发（每块几 KB、间隔毫秒级），旧代码每次回调都用「本回调累计字节差 / 微小 elapsed」算速度 → 瞬时速率随回调频率剧烈跳变，且每次进度更新速度就变。
-**修复**：改为**固定时间窗口采样**（`SPEED_WINDOW_MS=500ms`）：只在距上次采样满 500ms 时，用该窗口累计字节差 / 窗口时长算平均速度，并做 3:1 平滑（新 = (旧*3+新)/4）。进度仍每次回调更新，速度不再随回调跳变。
-
-### UI：类型行改为显式「全部」
-原类型行（CLASS/METHOD/FIELD）靠「点击已选取消回全部」，不直观。现类型行改为 `全部 / CLASS / METHOD / FIELD`（显式 ALL chip），删除点击取消行为。字段行本就有「全部」。
-
-## 18. 修复类名搜索中的「.」问题（2026-08-08）
-
-**现象**：类名搜索输入 `client` 可搜到，但 `client.` 结果为空。
-**根因**：索引是**纯前缀匹配**（`startsWith`）。类名索引存完整点分路径（从 `net.minecraft.` 开头）与简单类名，输入 `client.` 时没有索引键以 `client.` 开头。
-**修复**：
-1. `MappingIndex` 用 **段路径索引（classNameSegments）** 取代原 classNameSimple：对每个类记录「从每个 `.` 段边界开始的路径前缀」，如 `net.minecraft.client.Minecraft` → `net.minecraft.client.minecraft` / `minecraft.client.minecraft` / `client.minecraft` / `minecraft`。这样 `client`、`client.`、`client.renderer` 都能命中对应包/类。
-2. **去掉查询末尾的连续 `.`**，使 `client.` 等价于 `client`（用户中途输入包分隔符）。
-3. 「全部」字段也纳入段路径索引。
-新增测试 `带尾点与段路径可命中`。
+1. 所有工作都在 PR #8，请仓库所有者合并到 `main`（或按需关闭）。
+2. 若需继续开发，基于 `arena/019fdbb9-mixin-helper` 推新分支开新 PR。
+3. 有条件时做 §6 的真机端到端验证。
+4. 可选增强：Javadoc / 参数名纳入搜索索引（当前只索引可读名/混淆名/类名）。
