@@ -35,24 +35,25 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
     var searchField by remember { mutableStateOf("") }  // 空 = 全部字段
     var showDetail by remember { mutableStateOf<MappingEntity?>(null) }
 
-    // 类型：class / method / field；点击已选中项可取消回「全部」
-    val types = listOf("CLASS", "METHOD", "FIELD")
+    // 类型：全部 / class / method / field（显式「全部」，而非点击已选取消）
+    val types = listOf("全部", "CLASS", "METHOD", "FIELD")
+    val typeValues = mapOf("全部" to "", "CLASS" to "CLASS", "METHOD" to "METHOD", "FIELD" to "FIELD")
     // 字段：全部 / 可读名 / 混淆名 / 类名
     val fields = listOf("全部", "可读名", "混淆名", "类名")
     val fieldValues = mapOf("全部" to "", "可读名" to "deobf", "混淆名" to "obf", "类名" to "class")
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // 搜索类型切换（可取消回全部）
+        // 搜索类型切换（含显式「全部」选项）
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            types.forEach { t ->
+            types.forEach { label ->
+                val value = typeValues[label]!!
                 FilterChip(
-                    selected = searchType == t,
+                    selected = searchType == value,
                     onClick = {
-                        // 再次点击已选中的类型 -> 取消，回到全部类型
-                        searchType = if (searchType == t) "" else t
+                        searchType = value
                         viewModel.setType(searchType)
                     },
-                    label = { Text(t) }
+                    label = { Text(label) }
                 )
             }
         }

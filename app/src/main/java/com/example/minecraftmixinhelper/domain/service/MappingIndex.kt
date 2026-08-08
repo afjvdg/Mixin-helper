@@ -20,7 +20,8 @@ class MappingIndex {
     private val entries = mutableListOf<MappingEntityRef>()
     private var deobf: Array<Entry> = emptyArray()
     private var obf: Array<Entry> = emptyArray()
-    private var className: Array<Entry> = emptyArray()
+    private var className: Array<Entry> = emptyArray()   // 完整点分类名
+    private var classNameSimple: Array<Entry> = emptyArray() // 简单类名（`.` 后最后一段）
 
     /** 原始行（供回填完整实体）。 */
     data class MappingEntityRef(
@@ -47,7 +48,14 @@ class MappingIndex {
         deobf = build { it.deobfuscatedName }
         obf = build { it.obfuscatedName }
         className = build { it.className }
+        // 简单类名索引：取完整类名最后一个 `.` 后的段，使「Player」这类输入能命中。
+        classNameSimple = entries.mapIndexed { i, r ->
+            Entry(simpleName(r.className).lowercase(), i)
+        }.sortedBy { it.key }.toTypedArray()
     }
+
+    private fun simpleName(full: String): String =
+        full.substringAfterLast('.', full)
 
     /**
      * 前缀搜索。
@@ -73,8 +81,9 @@ class MappingIndex {
         val arrays = when (field.lowercase()) {
             "deobf" -> listOf(deobf)
             "obf" -> listOf(obf)
-            "class" -> listOf(className)
-            else -> listOf(deobf, obf, className)
+            // 类名搜索同时匹配完整点分类名与简单类名（如「Player」），扩大命中。
+            "class" -> listOf(className, classNameSimple)
+            else -> listOf(deobf, obf, className, classNameSimple)
         }
         var tooMany = false
         outer@ for (arr in arrays) {

@@ -38,6 +38,24 @@ class MappingIndexTest {
     }
 
     @Test
+    fun `类名搜索支持简单类名`() {
+        val idx = MappingIndex()
+        idx.rebuild(sample)
+        // 简单类名 "player" 应命中 Player(1,2,5)（className 以 ...Player 结尾）
+        val (bySimple, _) = idx.search("player", "class", "", "", "", 100)
+        val simpleIds = bySimple.map { it.id }.toSet()
+        assertTrue(simpleIds.contains(1L))
+        assertTrue(simpleIds.contains(2L))
+        assertTrue(simpleIds.contains(5L))
+        // 完整点分前缀也可命中
+        val (byFull, _) = idx.search("net.minecraft.world", "class", "", "", "", 100)
+        assertTrue(byFull.map { it.id }.contains(1L))
+        // "Inventory" 简单名命中 4
+        val (inv, _) = idx.search("inventory", "class", "", "", "", 100)
+        assertTrue(inv.map { it.id }.contains(4L))
+    }
+
+    @Test
     fun `全部字段是各单独字段的并集超集`() {
         val idx = MappingIndex()
         idx.rebuild(sample)

@@ -216,3 +216,16 @@ DAO 的 `searchMappings / searchByDeobfuscated / searchByObfuscated / searchByCl
   - 下载完成：若恰好在索引当前版本则重建，否则由懒加载兜底。
 - 移除 DAO `getAllIndexRows`（不再全量加载），新增 `getIndexRowsFor(version, loader)` 只取单版本行。
 - `SearchViewModel` 不再启动时急切建索引（删 `rebuildSearchIndex`/`isSearchIndexReady`），改由 `prefixSearch` 内懒加载。
+
+## 17. 修复类名搜索 + 下载速度 + 类型行显式 ALL（2026-08-08）
+
+### fatal：类名搜索什么都搜不到
+**根因**：类名索引存的是**完整点分路径**（`net.minecraft.world.entity.player.player`），用户输入简单类名 `player` 不是其前缀 → 空结果。
+**修复**：`MappingIndex` 新增 `classNameSimple` 索引（取完整类名 `.` 后最后一段，如 `player`），搜索 `class` 字段时**同时**匹配完整类名与简单类名。`全部` 字段也纳入简单类名。新增测试 `类名搜索支持简单类名`。
+
+### error：下载速度错误
+**根因**：`onDownload` 每次读块触发（每块几 KB、间隔毫秒级），旧代码每次回调都用「本回调累计字节差 / 微小 elapsed」算速度 → 瞬时速率随回调频率剧烈跳变，且每次进度更新速度就变。
+**修复**：改为**固定时间窗口采样**（`SPEED_WINDOW_MS=500ms`）：只在距上次采样满 500ms 时，用该窗口累计字节差 / 窗口时长算平均速度，并做 3:1 平滑（新 = (旧*3+新)/4）。进度仍每次回调更新，速度不再随回调跳变。
+
+### UI：类型行改为显式「全部」
+原类型行（CLASS/METHOD/FIELD）靠「点击已选取消回全部」，不直观。现类型行改为 `全部 / CLASS / METHOD / FIELD`（显式 ALL chip），删除点击取消行为。字段行本就有「全部」。

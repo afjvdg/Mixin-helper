@@ -53,31 +53,44 @@ class DownloadManager @Inject constructor(
     private val _repository = repository
 
     init {
-        // 把字节级进度回调接到 DownloadManager（单例全局锁保证同时只有一个下载）
+        // 把字节级进度回调接到 DownloadManager（单例全局锁保证同时只有一个下载）。
+        // onDownload 会频繁触发（每读一块一次），故速度用「固定时间窗口」采样：
+        // 只在距上次采样满 SPEED_WINDOW_MS 时才用该窗口内累计字节数算平均速度，
+        // 避免瞬时速率随回调频率跳变。
         downloader.bindProgressListener(object : DownloadProgressListener {
             override fun onProgress(downloaded: Long, total: Long?) {
                 val now = System.currentTimeMillis()
-                val elapsed = (now - lastTickTime).coerceAtLeast(1)
-                // 速度 = 本间隔内「新增」的字节数 / 间隔时间（而非累计字节数 / 间隔时间，
-                // 否则会随下载进度增长而虚高）。
-                val delta = (downloaded - lastDownloaded).coerceAtLeast(0)
-                val speed = delta * 1000 / elapsed
-                lastTickTime = now
-                lastDownloaded = downloaded
+                // 进度每次都更新
+                val percent = if (total != null && total > 0) {
+                    (downloaded.toFloat() / total).coerceIn(0f, 1f)
+                } else null
+                // 速度按窗口采样：窗口内字节数 / 窗口时长
+                var newSpeed = _progress.value.speed
+                if (now - lastSpeedSampleTime >= SPEED_WINDOW_MS) {
+                    val elapsed = (now - lastSpeedSampleTime).coerceAtLeast(1)
+                    val delta = (downloaded - lastSpeedSampleDownloaded).coerceAtLeast(0)
+                    val inst = delta * 1000 / elapsed
+                    // 轻量平滑：新速度取 3/4 旧 + 1/4 新，抑制跳变
+                    newSpeed = (newSpeed * 3 + inst) / 4
+                    lastSpeedSampleTime = now
+                    lastSpeedSampleDownloaded = downloaded
+                }
                 _progress.value = DownloadProgress(
                     downloaded = downloaded,
                     total = total,
-                    speed = speed,
-                    percent = if (total != null && total > 0) {
-                        (downloaded.toFloat() / total).coerceIn(0f, 1f)
-                    } else null
+                    speed = newSpeed,
+                    percent = percent
                 )
             }
         })
     }
 
-    private var lastTickTime: Long = System.currentTimeMillis()
-    private var lastDownloaded: Long = 0
+    private var lastSpeedSampleTime: Long = System.currentTimeMillis()
+    private var lastSpeedSampleDownloaded: Long = 0
+
+    private companion object {
+        const val SPEED_WINDOW_MS = 500L
+    }
 
     /** 从远程刷新版本列表（后台执行）。 */
     fun refreshVersions() {
@@ -101,8 +114,8 @@ class DownloadManager @Inject constructor(
         scope.launch {
             _activeIds.value = _activeIds.value + entity.id
             _progress.value = DownloadProgress()
-            lastTickTime = System.currentTimeMillis()
-            lastDownloaded = 0
+            lastSpeedSampleTime = System.currentTimeMillis()
+            lastSpeedSampleDownloaded = 0
             _status.value =
                 DashboardStatus.Loading("正在下载 ${entity.version} (${entity.loader})...")
             try {
