@@ -31,11 +31,6 @@
 
 ## 构建
 
-### GitHub Actions 自动构建
-
-已配置完整工作流：推送 `main` / `master` 即自动跑单元测试（`testDebugUnitTest`）并构建 `assembleDebug`，产出 `app-debug.apk` 上传到 Artifacts。
-
-获取 APK：仓库 **Actions** → 最新构建记录 → **Artifacts** → `app-debug`。
 
 ### 本地构建
 
@@ -84,4 +79,10 @@ chmod +x gradlew
 
 ## 许可证
 
-Apache License 2.0
+本项目源码采用 Apache License 2.0。
+
+### 第三方依赖
+
+- 本项目使用 junit:junit:4.13.2（仅测试用）进行单元测试，其许可证为
+  Eclipse Public License 1.0 (EPL-1.0)，https://www.eclipse.org/legal/epl-v10.html 。
+  本项目的 Apache-2.0 许可证与 EPL-1.0 测试依赖不冲突。
