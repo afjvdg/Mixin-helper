@@ -2,7 +2,7 @@
 
 > ⚠️ 本项目由 AI（Arena.ai Agent）辅助开发。功能已可正常使用，详见下方说明。
 
----
+**🌐 [Read this README in English](README_EN.md)**
 
 ## 项目简介
 
