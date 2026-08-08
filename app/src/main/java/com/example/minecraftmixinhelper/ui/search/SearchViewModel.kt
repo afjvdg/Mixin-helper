@@ -31,6 +31,10 @@ class SearchViewModel @Inject constructor(
     private val _versionLoaders = MutableStateFlow<List<VersionLoaderRow>>(emptyList())
     val versionLoaders: StateFlow<List<VersionLoaderRow>> = _versionLoaders.asStateFlow()
 
+    // 当前选中的「版本 + 加载器」（供 UI 展示；默认最近下载的版本）
+    private val _selectedVersionLoader = MutableStateFlow<VersionLoaderRow?>(null)
+    val selectedVersionLoader: StateFlow<VersionLoaderRow?> = _selectedVersionLoader.asStateFlow()
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
@@ -68,7 +72,16 @@ class SearchViewModel @Inject constructor(
                 }
         }
         viewModelScope.launch {
-            _versionLoaders.value = repository.getDownloadedVersionLoaders()
+            val rows = repository.getDownloadedVersionLoaders()
+            _versionLoaders.value = rows
+            // 默认选中最近下载的「版本+加载器」，让搜索限定在单个版本内
+            // （避免未选择版本时跨版本混合结果）。getDownloadedVersionLoaders 按版本降序，
+            // 第一条即最新版本。
+            rows.firstOrNull()?.let {
+                _version.value = it.version
+                _loader.value = it.loader
+                _selectedVersionLoader.value = it
+            }
         }
     }
 
@@ -80,6 +93,7 @@ class SearchViewModel @Inject constructor(
     fun setVersionLoader(row: VersionLoaderRow?) {
         _version.value = row?.version ?: ""
         _loader.value = row?.loader ?: ""
+        _selectedVersionLoader.value = row
     }
 
     /** 记录一次「确定」的搜索词（IME 搜索键），用于最近搜索。 */

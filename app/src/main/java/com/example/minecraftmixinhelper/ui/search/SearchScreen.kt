@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.minecraftmixinhelper.data.local.MappingEntity
-import com.example.minecraftmixinhelper.data.local.VersionLoaderRow
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -29,11 +28,11 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
     val versionLoaders by viewModel.versionLoaders.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val tooMany by viewModel.tooMany.collectAsState()
+    val selectedRow by viewModel.selectedVersionLoader.collectAsState()
 
     var query by remember { mutableStateOf("") }
     var searchType by remember { mutableStateOf("") }   // 空 = 全部类型
     var searchField by remember { mutableStateOf("") }  // 空 = 全部字段
-    var selectedRow by remember { mutableStateOf<VersionLoaderRow?>(null) }
     var showDetail by remember { mutableStateOf<MappingEntity?>(null) }
 
     // 类型：class / method / field；点击已选中项可取消回「全部」
@@ -96,7 +95,6 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
                     DropdownMenuItem(
                         text = { Text("${row.version} (${row.loader})") },
                         onClick = {
-                            selectedRow = row
                             versionExpanded = false
                             viewModel.setVersionLoader(row)
                         }

@@ -316,7 +316,7 @@ class MappingRepository @Inject constructor(
         version: String = "",
         loader: String = "",
         field: String = "",
-        limit: Int = 100
+        limit: Int = 200
     ): SearchResult {
         if (query.isBlank()) return SearchResult(emptyList())
         val raw = query.trim().lowercase()

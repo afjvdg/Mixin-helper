@@ -197,3 +197,9 @@ MCP 特色是**三级命名链**（Notch 混淆 → SRG `func_xxx`/`field_xxx` �
 
 ### 移除的旧搜索路径
 DAO 的 `searchMappings / searchByDeobfuscated / searchByObfuscated / searchByClassName / fuzzySearchFts / suggestFts` 及 repository 的 `toFtsMatchQuery` 全部删除（内存索引取代）。
+
+## 15. 搜索结果截断上限 200 + 默认限定单版本（2026-08-08）
+
+- **截断上限**：`MappingRepository.prefixSearch` 默认 `limit` 由 100 → **200**。命中超限时返回前 200 条并置 `tooMany`，UI 提示「结果过多，仅显示前 N 条，请继续输入」。
+- **版本加载方式（回答用户询问）**：当前是**一次性全量加载所有已下载版本**的映射行进内存索引（`getAllIndexRows` 全表，几 MB 级），搜索时按 `version` 参数在内存索引内过滤——**并非只加载本次搜索的版本**。数据量小，全量建索引成本可忽略且检索毫秒级。
+- **改进**：为避免未选择版本时跨版本混合结果，`SearchViewModel` 在加载版本列表后**默认选中最近下载的「版本+加载器」**（`getDownloadedVersionLoaders` 按版本降序，第一条即最新），搜索默认限定在单个版本内。新增 `selectedVersionLoader` StateFlow 供 UI 展示选中项。
