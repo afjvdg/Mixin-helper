@@ -18,9 +18,12 @@ interface MappingDao {
     @Query("SELECT DISTINCT version, loader FROM mappings WHERE version <> '' ORDER BY version DESC, loader ASC")
     suspend fun getDownloadedVersionLoaders(): List<VersionLoaderRow>
 
-    // 内存索引用的轻量全量行（不含大字段，节省内存；搜索后按需回填完整实体）
-    @Query("SELECT id, className, obfuscatedName, deobfuscatedName, type, version, loader FROM mappings")
-    suspend fun getAllIndexRows(): List<IndexRow>
+    // 内存索引：仅加载指定「版本 + 加载器」的行（懒加载，切换版本时重建）
+    @Query(
+        "SELECT id, className, obfuscatedName, deobfuscatedName, type, version, loader " +
+            "FROM mappings WHERE version = :version AND loader = :loader"
+    )
+    suspend fun getIndexRowsFor(version: String, loader: String): List<IndexRow>
 
     // 按 id 批量回填完整实体（前缀搜索命中后）
     @Query("SELECT * FROM mappings WHERE id IN (:ids)")

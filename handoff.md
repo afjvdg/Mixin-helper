@@ -203,3 +203,16 @@ DAO 的 `searchMappings / searchByDeobfuscated / searchByObfuscated / searchByCl
 - **截断上限**：`MappingRepository.prefixSearch` 默认 `limit` 由 100 → **200**。命中超限时返回前 200 条并置 `tooMany`，UI 提示「结果过多，仅显示前 N 条，请继续输入」。
 - **版本加载方式（回答用户询问）**：当前是**一次性全量加载所有已下载版本**的映射行进内存索引（`getAllIndexRows` 全表，几 MB 级），搜索时按 `version` 参数在内存索引内过滤——**并非只加载本次搜索的版本**。数据量小，全量建索引成本可忽略且检索毫秒级。
 - **改进**：为避免未选择版本时跨版本混合结果，`SearchViewModel` 在加载版本列表后**默认选中最近下载的「版本+加载器」**（`getDownloadedVersionLoaders` 按版本降序，第一条即最新），搜索默认限定在单个版本内。新增 `selectedVersionLoader` StateFlow 供 UI 展示选中项。
+
+## 16. 索引懒加载：单版本驻留 + 切换版本时卸载切换（2026-08-08）
+
+用户理想：**用户开始输入时才加载所选版本的文件**；单次搜索后**不卸载**（会继续输入）；**切换版本时卸载旧版本并加载新版本**。
+
+实现：
+- 索引 `MappingIndex` 现**只保留当前选中版本**的数据（不再一次性加载全部版本）。
+- `MappingRepository`：
+  - `ensureIndexFor(version, loader)`：索引版本 == 目标 → 复用（不重建，满足"单次搜索后不卸载"）；否则 `loadIndexFor` 卸载旧版本、仅加载新版本（满足"切换版本卸载并切换"）。
+  - `prefixSearch` 在**用户开始输入**（搜索调用）时才调用 `ensureIndexFor`，实现"输入时才加载"。
+  - 下载完成：若恰好在索引当前版本则重建，否则由懒加载兜底。
+- 移除 DAO `getAllIndexRows`（不再全量加载），新增 `getIndexRowsFor(version, loader)` 只取单版本行。
+- `SearchViewModel` 不再启动时急切建索引（删 `rebuildSearchIndex`/`isSearchIndexReady`），改由 `prefixSearch` 内懒加载。

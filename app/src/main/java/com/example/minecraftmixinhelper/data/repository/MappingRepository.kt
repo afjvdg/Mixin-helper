@@ -30,8 +30,10 @@ class MappingRepository @Inject constructor(
 ) {
 
     // 内存前缀索引：为实时搜索提供毫秒级前缀补全（替代 FTS+LIKE 混用）。
+    // 设计：索引**只保留当前选中版本**的数据，切换版本时卸载旧版本、输入时懒加载新版本。
     private val index = MappingIndex()
-    @Volatile private var indexReady = false
+    @Volatile private var loadedVersion: String? = null
+    @Volatile private var loadedLoader: String? = null
 
     fun getVersions(): Flow<List<VersionEntity>> = versionDao.getAllVersions()
 
@@ -229,13 +231,26 @@ class MappingRepository @Inject constructor(
         }
         mappingDao.insertAll(entities)
         versionDao.markCached(version, loader)
-        // 下载完成：重建内存搜索索引，使新版本立即可搜
-        rebuildSearchIndex()
+        // 下载完成：若恰好在索引当前版本，则重建使新数据立即可搜；否则无需处理（懒加载）
+        if (loadedVersion == version && loadedLoader == loader) {
+            loadIndexFor(version, loader)
+        }
     }
 
-    /** 把全部映射行加载进内存前缀索引（启动时 / 下载完成后调用）。 */
-    suspend fun rebuildSearchIndex() = withContext(Dispatchers.IO) {
-        val rows = mappingDao.getAllIndexRows()
+    /**
+     * 确保内存索引已加载**当前选中版本**的数据（懒加载）。
+     * - 索引版本 == 目标版本：直接复用（不重建，单次搜索后不卸载）。
+     * - 索引版本 != 目标版本：卸载旧版本数据，仅加载新版本（切换版本需要卸载并切换）。
+     * 返回 true 表示索引就绪（可搜索）；false 表示目标版本无数据。
+     */
+    suspend fun ensureIndexFor(version: String, loader: String): Boolean = withContext(Dispatchers.IO) {
+        if (version.isBlank()) return@withContext false
+        if (loadedVersion == version && loadedLoader == loader) return@withContext true
+        loadIndexFor(version, loader)
+    }
+
+    private suspend fun loadIndexFor(version: String, loader: String): Boolean {
+        val rows = mappingDao.getIndexRowsFor(version, loader)
         index.rebuild(rows.map { r ->
             MappingIndex.MappingEntityRef(
                 id = r.id,
@@ -247,10 +262,13 @@ class MappingRepository @Inject constructor(
                 loader = r.loader
             )
         })
-        indexReady = true
+        loadedVersion = version
+        loadedLoader = loader
+        return rows.isNotEmpty()
     }
 
-    fun isSearchIndexReady(): Boolean = indexReady
+    /** 当前索引已加载的版本（供调试/提示）。 */
+    fun loadedIndexVersion(): String? = loadedVersion
 
     /**
      * 解析 Mojang 官方映射的 version.json URL：
@@ -319,6 +337,11 @@ class MappingRepository @Inject constructor(
         limit: Int = 200
     ): SearchResult {
         if (query.isBlank()) return SearchResult(emptyList())
+        // 懒加载：搜索（用户开始输入）时确保已加载当前选中版本的索引。
+        // 若索引是其他版本（切换过），此处会卸载旧版本并仅加载新版本。
+        if (version.isNotBlank()) {
+            if (!ensureIndexFor(version, loader)) return SearchResult(emptyList())
+        }
         val raw = query.trim().lowercase()
         val (refs, tooMany) = index.search(raw, field, type, version, loader, limit)
         if (refs.isEmpty()) return SearchResult(emptyList(), tooMany)

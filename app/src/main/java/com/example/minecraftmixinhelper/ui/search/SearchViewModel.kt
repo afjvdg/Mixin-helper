@@ -50,10 +50,6 @@ class SearchViewModel @Inject constructor(
     private val _field = MutableStateFlow("")     // 空 = 全部字段（可读名+混淆名+类名）
 
     init {
-        // 启动时加载内存索引，使搜索可用
-        viewModelScope.launch {
-            if (!repository.isSearchIndexReady()) repository.rebuildSearchIndex()
-        }
         viewModelScope.launch {
             combine(_query, _type, _version, _loader, _field) { q, t, v, l, f -> Quint(q, t, v, l, f) }
                 .debounce(150)
