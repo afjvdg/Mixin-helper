@@ -170,3 +170,30 @@
 - 研究结论：**两者在 mod 编写时使用的映射名相同**——都基于 **Mojang 官方映射（mojmap）**，通常叠加 **Parchment**（参数名+Javadoc）。Forge 自 1.17 起、NeoForge 自 1.20.1 起使用 mojmap。
 - 差异仅在 **Forge <1.17**：Forge 1.17 之前用 **MCP**（社区映射，SRG 名 `func_xxx`/`field_xxx`），NeoForge 没有 <1.17 的旧版本。
 - 当前 app 实现已一致：forge>=1.17 与 neoforge 都是 `parchment`（mojmap+Parchment 捆绑下载），forge<1.17 是 `mcp`。无需改动。
+
+## 14. 搜索改为内存前缀自动补全 + MCP 显示设计（2026-08-08）
+
+### Fatal：修复「全部」与单独字段搜索结果不一致
+**根因**：旧实现里 `field=""`（全部）走 FTS 前缀 + LIKE 子串合并，而单独字段（deobf/obf/class）各自走 LIKE 子串查询——两种匹配语义不同，导致「全部」结果反而更少且不同。
+**方案**：按用户建议采用「有序数组 + 二分查找」的**内存前缀索引**（数据量 1~5MB，单机毫秒级）：
+- 新增 `MappingIndex`（domain/service）：对 deobf/obf/class 各维护一个按**小写名**排序的字符串数组，输入前缀用二分定位 `>=` 前缀的下标再顺序扫描前缀段。
+- 「全部」= 三字段前缀命中的**并集**，天然 ≥ 任一单独字段，且各字段语义一致（都是前缀匹配）。
+- 结果截断：命中超 `limit`（默认 100）时返回前 100 并置 `tooMany`，UI 提示「结果过多，请继续输入」。
+- 防抖 250ms→150ms。
+
+**修复的排序 bug**：排序必须与二分比较都用**小写**，否则大小写混合导致二分失效（`MappingIndex.Entry` 存 `key`=小写名）。
+
+**接线**：`MappingRepository.rebuildSearchIndex()` 从 DAO 全量加载轻量行（`getAllIndexRows`）建索引；下载完成后重建；`SearchViewModel` 启动时若未就绪则重建。搜索改走 `prefixSearch()`，命中后按 id 批量回填完整实体（`getByIds`）。
+
+### error1：MCP 映射显示设计
+MCP 特色是**三级命名链**（Notch 混淆 → SRG `func_xxx`/`field_xxx` → MCP 可读名）：
+- 搜索结果列表：MCP 的方法/字段显示「SRG 名: func_xxx」（而非「混淆名」）；CLASS 显示「混淆名」。
+- 详情对话框：MCP 下 CLASS 显示「混淆类名(Notch)」，成员显示「SRG 名」。
+
+### 询问：Parchment 注释/补充信息利用情况
+已合理利用：
+- Forge≥1.17 / NeoForge 下载时下载 Parchment（`downloadParchmentJson`），解析后 `applyParchment` 把**参数名 paramNames + Javadoc** 叠加到对应 Mojang 方法/类上。
+- 详情对话框会显示「参数名」「Javadoc」。但**暂未做 Javadoc 全文搜索**（`MappingIndex` 只索引 可读名/混淆名/类名，不索引 javadoc/paramNames）。
+
+### 移除的旧搜索路径
+DAO 的 `searchMappings / searchByDeobfuscated / searchByObfuscated / searchByClassName / fuzzySearchFts / suggestFts` 及 repository 的 `toFtsMatchQuery` 全部删除（内存索引取代）。

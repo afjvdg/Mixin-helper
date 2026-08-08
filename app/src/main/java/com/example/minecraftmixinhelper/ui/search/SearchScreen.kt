@@ -28,6 +28,7 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
     val recentQueries by viewModel.recentQueries.collectAsState()
     val versionLoaders by viewModel.versionLoaders.collectAsState()
     val loading by viewModel.loading.collectAsState()
+    val tooMany by viewModel.tooMany.collectAsState()
 
     var query by remember { mutableStateOf("") }
     var searchType by remember { mutableStateOf("") }   // 空 = 全部类型
@@ -160,9 +161,11 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
             else -> {
                 if (!loading) {
                     Text(
-                        "共 ${results.size} 条结果",
+                        if (tooMany) "结果过多，仅显示前 ${results.size} 条，请继续输入以缩小范围"
+                        else "共 ${results.size} 条结果",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.outline
+                        color = if (tooMany) MaterialTheme.colorScheme.tertiary
+                        else MaterialTheme.colorScheme.outline
                     )
                     Spacer(Modifier.height(4.dp))
                 }
@@ -174,7 +177,12 @@ fun SearchScreen(navController: NavController, viewModel: SearchViewModel = hilt
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(mapping.deobfuscatedName, style = MaterialTheme.typography.titleMedium)
-                                Text("混淆名: ${mapping.obfuscatedName}", style = MaterialTheme.typography.bodySmall)
+                                // 混淆名：MCP 下即 SRG 名（func_/field_），类条目则显示混淆类名
+                                if (mapping.loader.equals("mcp", true) && mapping.type != "CLASS") {
+                                    Text("SRG 名: ${mapping.obfuscatedName}", style = MaterialTheme.typography.bodySmall)
+                                } else {
+                                    Text("混淆名: ${mapping.obfuscatedName}", style = MaterialTheme.typography.bodySmall)
+                                }
                                 Text(
                                     mapping.className,
                                     style = MaterialTheme.typography.bodySmall,
@@ -207,7 +215,15 @@ private fun DetailDialog(mapping: MappingEntity, onDismiss: () -> Unit) {
                 Text("类型: ${mapping.type}")
                 Text("版本: ${mapping.version} / ${mapping.loader}")
                 Text("类: ${mapping.className}")
-                Text("混淆名: ${mapping.obfuscatedName}")
+                // MCP 的三级命名链：Notch 混淆 -> SRG -> MCP 可读名
+                if (mapping.loader.equals("mcp", true)) {
+                    when (mapping.type) {
+                        "CLASS" -> Text("混淆类名(Notch): ${mapping.obfuscatedName}")
+                        else -> Text("SRG 名: ${mapping.obfuscatedName}")
+                    }
+                } else {
+                    Text("混淆名: ${mapping.obfuscatedName}")
+                }
                 if (!mapping.descriptor.isNullOrBlank()) Text("描述符: ${mapping.descriptor}")
                 if (!mapping.params.isNullOrBlank()) Text("参数: ${mapping.params}")
                 if (!mapping.paramNames.isNullOrEmpty()) Text("参数名: ${mapping.paramNames.joinToString(", ")}")

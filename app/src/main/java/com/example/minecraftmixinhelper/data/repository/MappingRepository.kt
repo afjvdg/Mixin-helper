@@ -9,6 +9,7 @@ import com.example.minecraftmixinhelper.data.remote.FabricApi
 import com.example.minecraftmixinhelper.data.remote.ForgeNeoForgeApi
 import com.example.minecraftmixinhelper.data.remote.MappingDownloader
 import com.example.minecraftmixinhelper.data.remote.MojangApi
+import com.example.minecraftmixinhelper.domain.service.MappingIndex
 import com.example.minecraftmixinhelper.domain.service.McVersionComparator
 import com.example.minecraftmixinhelper.domain.service.McpParser
 import com.example.minecraftmixinhelper.domain.service.MojmapParser
@@ -16,7 +17,6 @@ import com.example.minecraftmixinhelper.domain.service.ParchmentParser
 import com.example.minecraftmixinhelper.domain.service.TinyParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -28,6 +28,10 @@ class MappingRepository @Inject constructor(
     private val forgeApi: ForgeNeoForgeApi,
     private val downloader: MappingDownloader
 ) {
+
+    // 内存前缀索引：为实时搜索提供毫秒级前缀补全（替代 FTS+LIKE 混用）。
+    private val index = MappingIndex()
+    @Volatile private var indexReady = false
 
     fun getVersions(): Flow<List<VersionEntity>> = versionDao.getAllVersions()
 
@@ -225,7 +229,28 @@ class MappingRepository @Inject constructor(
         }
         mappingDao.insertAll(entities)
         versionDao.markCached(version, loader)
+        // 下载完成：重建内存搜索索引，使新版本立即可搜
+        rebuildSearchIndex()
     }
+
+    /** 把全部映射行加载进内存前缀索引（启动时 / 下载完成后调用）。 */
+    suspend fun rebuildSearchIndex() = withContext(Dispatchers.IO) {
+        val rows = mappingDao.getAllIndexRows()
+        index.rebuild(rows.map { r ->
+            MappingIndex.MappingEntityRef(
+                id = r.id,
+                className = r.className,
+                obfuscatedName = r.obfuscatedName,
+                deobfuscatedName = r.deobfuscatedName,
+                type = r.type,
+                version = r.version,
+                loader = r.loader
+            )
+        })
+        indexReady = true
+    }
+
+    fun isSearchIndexReady(): Boolean = indexReady
 
     /**
      * 解析 Mojang 官方映射的 version.json URL：
@@ -271,66 +296,37 @@ class MappingRepository @Inject constructor(
         }
     }
 
-    // ==================== 搜索（FTS4 前缀 + LIKE 回退） ====================
+    // ==================== 搜索（内存前缀自动补全） ====================
+
+    /** 搜索结果：命中的实体 + 是否命中数超过上限（用于提示「结果过多」）。 */
+    data class SearchResult(
+        val items: List<MappingEntity>,
+        val tooMany: Boolean = false
+    )
 
     /**
-     * 实时搜索。
-     * [field] 限定搜索范围：deobf / obf / class / all（空 = 全部字段）。
-     * [type] 限定类型：CLASS / METHOD / FIELD / all（空或 ALL = 全部类型，默认）。
-     * 子串匹配（LIKE）保证「get」能命中 getX 等方法。
+     * 实时前缀搜索，走内存索引（毫秒级）。
+     * [field]：deobf / obf / class / 空(全部)。
+     * [type]：空或 ALL = 全部类型，否则 CLASS/METHOD/FIELD。
+     * [limit]：返回上限；命中超限时 [SearchResult.tooMany] 置 true。
      */
-    suspend fun fuzzySearch(
+    suspend fun prefixSearch(
         query: String,
         type: String = "",
         version: String = "",
         loader: String = "",
-        field: String = ""
-    ): List<MappingEntity> {
-        if (query.isBlank()) return emptyList()
-        val raw = query.trim()
-        val matched = when (field.lowercase()) {
-            "deobf" -> mappingDao.searchByDeobfuscated(raw)
-            "obf" -> mappingDao.searchByObfuscated(raw)
-            "class" -> mappingDao.searchByClassName(raw)
-            else -> {
-                // 全部字段：FTS 前缀 + LIKE 子串合并
-                val fts = try {
-                    mappingDao.fuzzySearchFts(toFtsMatchQuery(raw))
-                } catch (e: Exception) {
-                    emptyList()
-                }
-                val like = try {
-                    mappingDao.searchMappings(raw).first()
-                } catch (e: Exception) {
-                    emptyList()
-                }
-                (fts + like).distinctBy { it.id }
-            }
-        }
-        return filterResults(matched, type, version, loader)
-    }
-
-    private fun filterResults(
-        results: List<MappingEntity>,
-        type: String,
-        version: String,
-        loader: String = ""
-    ): List<MappingEntity> {
-        return results.filter { m ->
-            (type.isBlank() || type.equals("ALL", true) || m.type.equals(type, ignoreCase = true)) &&
-                (version.isBlank() || m.version == version) &&
-                (loader.isBlank() || m.loader.equals(loader, ignoreCase = true))
-        }
-    }
-
-    // FTS4 前缀匹配：清洗输入 -> 逐词用双引号包裹 + 前缀 *，多词空格连接
-    private fun toFtsMatchQuery(raw: String): String {
-        return raw.split(Regex("""\s+"""))
-            .filter { it.isNotEmpty() }
-            .joinToString(" ") { word ->
-                val cleaned = word.replace(Regex("""["*\\-]"""), "")
-                if (cleaned.isEmpty()) "" else "\"$cleaned\"*"
-            }
+        field: String = "",
+        limit: Int = 100
+    ): SearchResult {
+        if (query.isBlank()) return SearchResult(emptyList())
+        val raw = query.trim().lowercase()
+        val (refs, tooMany) = index.search(raw, field, type, version, loader, limit)
+        if (refs.isEmpty()) return SearchResult(emptyList(), tooMany)
+        // 按 id 批量回填完整实体
+        val entities = mappingDao.getByIds(refs.map { it.id })
+        val byId = entities.associateBy { it.id }
+        val ordered = refs.mapNotNull { byId[it.id] }
+        return SearchResult(ordered, tooMany)
     }
 
     suspend fun getDownloadedVersions(): List<String> = mappingDao.getDownloadedVersions()

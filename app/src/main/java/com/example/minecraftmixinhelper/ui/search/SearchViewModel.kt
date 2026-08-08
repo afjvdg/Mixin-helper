@@ -34,7 +34,11 @@ class SearchViewModel @Inject constructor(
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
-    // query / type / version / loader / field 状态流，250ms 防抖后触发搜索
+    // 命中数是否超限（提示「结果过多，请继续输入」）
+    private val _tooMany = MutableStateFlow(false)
+    val tooMany: StateFlow<Boolean> = _tooMany.asStateFlow()
+
+    // query / type / version / loader / field 状态流，150ms 防抖后触发搜索
     private val _query = MutableStateFlow("")
     private val _type = MutableStateFlow("")      // 空 = 全部类型
     private val _version = MutableStateFlow("")
@@ -42,16 +46,23 @@ class SearchViewModel @Inject constructor(
     private val _field = MutableStateFlow("")     // 空 = 全部字段（可读名+混淆名+类名）
 
     init {
+        // 启动时加载内存索引，使搜索可用
+        viewModelScope.launch {
+            if (!repository.isSearchIndexReady()) repository.rebuildSearchIndex()
+        }
         viewModelScope.launch {
             combine(_query, _type, _version, _loader, _field) { q, t, v, l, f -> Quint(q, t, v, l, f) }
-                .debounce(250)
+                .debounce(150)
                 .collect { (q, t, v, l, f) ->
                     if (q.isBlank()) {
                         _searchResults.value = emptyList()
+                        _tooMany.value = false
                         _loading.value = false
                     } else {
                         _loading.value = true
-                        _searchResults.value = repository.fuzzySearch(q, t, v, l, f)
+                        val res = repository.prefixSearch(q, t, v, l, f)
+                        _searchResults.value = res.items
+                        _tooMany.value = res.tooMany
                         _loading.value = false
                     }
                 }

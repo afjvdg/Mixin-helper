@@ -32,3 +32,14 @@ data class VersionLoaderRow(
     val version: String,
     val loader: String
 )
+
+/** 内存前缀索引用的轻量行（不含描述符/参数/Javadoc 等大字段）。 */
+data class IndexRow(
+    val id: Long,
+    val className: String,
+    val obfuscatedName: String,
+    val deobfuscatedName: String,
+    val type: String,
+    val version: String,
+    val loader: String
+)
