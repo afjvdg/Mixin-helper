@@ -31,12 +31,6 @@ Core capabilities:
 
 ## Build
 
-### GitHub Actions
-
-A complete workflow is configured: on push to `main` / `master` it runs unit tests (`testDebugUnitTest`) and builds `assembleDebug`, uploading `app-debug.apk` to Artifacts.
-
-Get the APK: repo **Actions** → latest run → **Artifacts** → `app-debug`.
-
 ### Local build
 
 ```bash
@@ -84,4 +78,10 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 
 ## License
 
-Apache License 2.0
+The source code of this project is licensed under the Apache License 2.0.
+
+## Third-party Dependencies
+
+· This project uses junit:junit:4.13.2 (for testing only) for unit testing, which is licensed under the
+  Eclipse Public License 1.0 (EPL-1.0), https://www.eclipse.org/legal/epl-v10.html .
+  The Apache-2.0 license of this project does not conflict with the EPL-1.0 test dependency.
