@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Material3.DayNight.NoActionBar" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
-    </style>
+    <!--
+        纯 Compose 应用：窗口/启动主题使用框架自带的 NoActionBar 主题，
+        确保在任何 Android 版本（API 21+，本项目 minSdk 26）都能解析。
+        UI 全部由 Compose Material3 渲染，此主题仅影响启动窗口与状态栏。
+        不要再引用 Theme.Material3.* —— 那来自 com.google.android.material
+        （Material Components），本项目未声明该依赖，会导致无法解析/启动异常。
+    -->
+    <style name="Theme.MinecraftMixinHelper" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

@@ -6,7 +6,7 @@ import io.ktor.client.request.*
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class FabricGameVersion(val version: String)
+data class FabricGameVersion(val version: String, val stable: Boolean = false)
 
 @Serializable
 data class FabricLoaderVersion(val loader: LoaderInfo)

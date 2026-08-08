@@ -10,8 +10,8 @@ import androidx.room.Entity
 data class VersionEntity(
     val id: String,               // "$version|$loader"
     val version: String,
-    val loader: String,           // mojang / fabric / forge / neoforge / parchment
-    val mappingType: String,      // mojmap / yarn / mcp / parchment
+    val loader: String,           // mojmap / fabric / forge / neoforge
+    val mappingType: String,      // mojmap / yarn / parchment
     val isCached: Boolean = false,
     val versionJsonUrl: String = "",
     val lastUpdated: Long = System.currentTimeMillis()
